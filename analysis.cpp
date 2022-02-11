@@ -73,8 +73,25 @@ public:
 	std::vector<std::tuple<int, int, int>> points;
 	std::vector<std::tuple<int, int, int>> boundary;
 	std::tuple<int, int, int> local_max;
+
+	//virtual void to_csv(char buf[]) = 0;
 };
 
+class Nucleus : public Blob {
+public:
+	int id;
+
+};
+
+class Dot : public Blob {
+	int id; 
+
+};
+
+void gaussianElimination(std::array<std::array<float, 3>,3> mat) {
+	// this typechecks?  
+	return;
+}
 
 void findMaxima(float* voxels, std::vector<std::tuple<int, int, int>> &maxima) {
 	for (int z = 1; z < 200; z++) {
@@ -167,6 +184,111 @@ void gradientField3d(float* voxels, float3* gradientField) {
 	}
 }
 
+void eigenvalues(std::array<std::array<float, 3>, 3> hessian, float& eig1, float& eig2, float&eig3) {
+	/*
+*
+*
+	Extra Fast algorithm for computing eigenvalues of 3x3 symmetric matrices
+	https://en.wikipedia.org/wiki/Eigenvalue_algorithm#3.C3.973_matrices
+*/
+	float q = (hessian[0][0] + hessian[1][1] + hessian[2][2]) / 3;
+	float p2 = (hessian[0][0] - q) * (hessian[0][0] - q) +
+		(hessian[1][1] - q) * (hessian[1][1] - q) +
+		(hessian[2][2] - q) * (hessian[2][2] - q) +
+		2 * (hessian[1][0] * hessian[1][0] + hessian[2][0] * hessian[2][0] + hessian[2][1] * hessian[2][1]);
+	float p = sqrt(p2 / 6);
+
+	// B = 1/p (A - qI)
+	hessian[0][0] -= q;
+	hessian[1][1] -= q;
+	hessian[2][2] -= q;
+
+	hessian[0][0] = hessian[0][0] / p;
+	hessian[1][1] = hessian[1][1] / p;
+	hessian[2][2] = hessian[2][2] / p;
+	hessian[1][0] = hessian[1][0] / p;
+	hessian[2][0] = hessian[2][0] / p;
+	hessian[2][1] = hessian[2][1] / p;
+
+
+	float det = hessian[0][0] * (hessian[1][1] * hessian[2][2] - hessian[2][1] * hessian[2][1])
+		- hessian[1][0] * (hessian[1][0] * hessian[2][2] - hessian[2][1] * hessian[2][0])
+		+ hessian[2][0] * (hessian[1][0] * hessian[2][1] - hessian[1][1] * hessian[2][0]);
+
+
+	float r2 = det / 2;
+	float phi;
+	if (r2 <= -1) {
+		phi = 3.1415926535 / 3;
+	}
+	else if (r2 >= 1.0) {
+		phi = 0;
+	}
+	else {
+		phi = acos(r2) / 3;
+	}
+	eig1 = q + 2 * p * cos(phi);
+	eig2 = q + 2 * p * cos(phi + (2 * 3.1415926535 / 3));
+	eig3 = 3 * q - eig1 - eig2;
+}
+
+// this is not the correct way to compute the eigenvector, but it'll have to do for now.
+// why not just swap this out for more professional algos like LAPACK?
+void eigenvector(std::array<std::array<float, 3>, 3> hessian, float eig, float3& ev) {
+	hessian[0][0] = hessian[0][0] - eig;
+	hessian[1][1] = hessian[1][1] - eig;
+	hessian[2][2] = hessian[2][2] - eig;
+
+	std::array<float, 3> tmp{};
+
+	for (int i = 0; i < 3; i++) {
+		// change the pivot if the current point is zero
+		if(hessian[i][i] == 0) {
+			for (int j = i+1; j < 3; j++) {
+				// swap pivot row into ith row
+				if (hessian[j][i] != 0) {
+					for (int k = 0; k < 3; k++) {
+						tmp[k] = hessian[i][k];
+						hessian[i][k] = hessian[j][k]; // normalize to 1
+						hessian[j][k] = tmp[k];
+					}
+					break;
+				}
+			}  // if we get to the end of this, it's just a column of zeros.
+		}
+		if (hessian[i][i] != 0) {
+			for (int j = 0; j < 3; j++) {
+				float ratio = hessian[j][i] / hessian[i][i];
+				if (j == i) continue;
+				for (int k = 0; k < 3; k++) {
+					hessian[j][k] -= ratio * hessian[i][k];
+				} // zeroing out the jth column
+			}
+		}
+
+
+	} // now we should be in some kind of rref
+
+
+	for (int i = 0; i < 3; i++) {
+		if (hessian[i][i] == 0) {
+			tmp[i] = 1;
+		}
+		else {
+			for (int j = 0; j < 3; j++) {
+				if(j!=i) tmp[i] -= hessian[i][j] / hessian[i][i];
+			}
+		}
+	}
+
+	float ev_mag = sqrt(tmp[0]*tmp[0] + tmp[1] * tmp[1] + tmp[2] * tmp[2]);
+
+	ev.x = tmp[0] / ev_mag;
+	ev.y = tmp[1] / ev_mag;
+	ev.z = tmp[2] / ev_mag;
+}
+
+
 // does not compute laplacian on the boundary.
 // can be implemented later with a one-sided stencil. 
 // but I could not find the terms using a quick google search. 
@@ -244,11 +366,289 @@ void laplacianFilter3D(float* voxels, float* laplacian) {
 	}
 }
 
+void hessianAt(float3* gradientField, int x2, int y2, int z2, std::array<std::array<float, 3>, 3>& hessian) {
+	float sixth_order_centered[4] = { 0, 3.0 / 4, -3.0 / 20, 1.0 / 60 };
+	float sixth_order_forward[7] = { -49.0 / 20, 6.0, -15.0 / 2, 20.0 / 3, -15.0 / 4, 6.0 / 5, -1.0 / 6 };
+
+	if (x2 < 3) {
+		for (int j = 0; j < 7; j++) {
+			float3 gradf = gradientField[(x2 + j) + 2048 * y2 + 2048 * 2048 * z2];
+			hessian[0][0] += gradf.x * sixth_order_forward[j];// d2fdx2
+			hessian[1][0] += gradf.y * sixth_order_forward[j]; // d2fdxdy
+			hessian[2][0] += gradf.z * sixth_order_forward[j]; // d2fdxdz
+		}
+	}
+	else if (x2 > 2048 - 4) {
+		for (int j = 0; j < 7; j++) {
+			float3 gradf = gradientField[(x2 - j) + 2048 * y2 + 2048 * 2048 * z2];
+			hessian[0][0] -= gradf.x * sixth_order_forward[j];// d2fdx2
+			hessian[1][0] -= gradf.y * sixth_order_forward[j]; // d2fdxdy
+			hessian[2][0] -= gradf.z * sixth_order_forward[j]; // d2fdxdz
+		}
+	}
+	else {
+		for (int j = 1; j < 4; j++) {
+			float3 gradf = gradientField[(x2 - j) + 2048 * y2 + 2048 * 2048 * z2];
+			hessian[0][0] -= gradf.x * sixth_order_centered[j];// d2fdx2
+			hessian[1][0] -= gradf.y * sixth_order_centered[j]; // d2fdxdy
+			hessian[2][0] -= gradf.z * sixth_order_centered[j]; // d2fdxdz
+
+
+			gradf = gradientField[(x2 + j) + 2048 * y2 + 2048 * 2048 * z2];
+			hessian[0][0] += gradf.x * sixth_order_centered[j];// d2fdx2
+			hessian[1][0] += gradf.y * sixth_order_centered[j]; // d2fdxdy
+			hessian[2][0] += gradf.z * sixth_order_centered[j]; // d2fdxdz
+		}
+	}
+
+
+	if (y2 < 3) {
+		for (int k = 0; k < 7; k++) {
+			float3 gradf = gradientField[x2 + 2048 * (y2 + k) + 2048 * 2048 * z2];
+			hessian[1][1] += gradf.y * sixth_order_forward[k];// d2fdy2
+			hessian[2][1] += gradf.z * sixth_order_forward[k];// d2fdydz
+		}
+	}
+	else if (y2 > 2048 - 4) {
+		for (int k = 0; k < 7; k++) {
+			float3 gradf = gradientField[x2 + 2048 * (y2 - k) + 2048 * 2048 * z2];
+			hessian[1][1] -= gradf.y * sixth_order_forward[k];// d2fdy2
+			hessian[2][1] -= gradf.z * sixth_order_forward[k];// d2fdy2
+		}
+	}
+	else {
+		for (int k = 1; k < 4; k++) {
+			float3 gradf = gradientField[x2 + 2048 * (y2 + k) + 2048 * 2048 * z2];
+			hessian[1][1] += gradf.y * sixth_order_centered[k];// d2fdy2
+			hessian[2][1] += gradf.z * sixth_order_centered[k];// d2fdy2
+
+
+			gradf = gradientField[x2 + 2048 * (y2 - k) + 2048 * 2048 * z2];
+			hessian[1][1] -= gradf.y * sixth_order_centered[k];// d2fdy2
+			hessian[2][1] -= gradf.z * sixth_order_centered[k];// d2fdy2
+		}
+	}
+
+
+	if (z2 < 3) {
+
+		for (int l = 0; l < 7; l++) {
+			float3 gradf = gradientField[x2 + 2048 * y2 + 2048 * 2048 * (z2 + l)];
+			hessian[2][2] += gradf.z * sixth_order_forward[l];// d2fdz2
+
+		}
+	}
+	else if (z2 > 201 - 4) {
+		for (int l = 0; l < 7; l++) {
+			float3 gradf = gradientField[x2 + 2048 * y2 + 2048 * 2048 * (z2 - l)];
+			hessian[2][2] -= gradf.z * sixth_order_forward[l];// d2fdz2
+		}
+	}
+	else {
+
+		for (int l = 1; l < 4; l++) {
+			float3 gradf = gradientField[x2 + 2048 * y2 + 2048 * 2048 * (z2 + l)];
+			hessian[2][2] += gradf.z * sixth_order_centered[l];// d2fdz2
+
+			gradf = gradientField[x2 + 2048 * y2 + 2048 * 2048 * (z2 - l)];
+			hessian[2][2] -= gradf.z * sixth_order_centered[l];// d2fdz2
+
+		}
+	}
+	hessian[0][1] = hessian[1][0];
+	hessian[0][2] = hessian[2][0];
+	hessian[1][2] = hessian[2][1];
+}
+
+// second order accurate
+float third_directional_deriv(float3* gradientField, int x3, int y3, int z3, float3& ev) {
+	// compute the hessian at x2
+	float3 d3f{};
+	std::array<std::array<float, 3>, 3> hessian_tmp;
+
+	d3f.x = 0;
+	if (x3 < 1) {
+		hessianAt(gradientField, x3, y3, z3, hessian_tmp);
+		d3f.x -= 3.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3 + 1, y3, z3, hessian_tmp);
+		d3f.x += 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3 + 2, y3, z3, hessian_tmp);
+		d3f.x -= 1.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	else if (x3 > 2048 - 2) {
+		hessianAt(gradientField, x3, y3, z3, hessian_tmp);
+		d3f.x += 3.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3 - 1, y3, z3, hessian_tmp);
+		d3f.x -= 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3 - 2, y3, z3, hessian_tmp);
+		d3f.x += 1.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	else {
+		hessianAt(gradientField, x3 + 1, y3, z3, hessian_tmp);
+		d3f.x += (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3 - 1, y3, z3, hessian_tmp);
+		d3f.x -= (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+
+	d3f.y = 0;
+	if (y3 < 1) {
+		hessianAt(gradientField, x3, y3, z3, hessian_tmp);
+		d3f.y -= 3.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3 + 1, z3, hessian_tmp);
+		d3f.y += 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3 + 2, z3, hessian_tmp);
+		d3f.y -= 1.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	else if (y3 > 2048 - 2) {
+		hessianAt(gradientField, x3, y3, z3, hessian_tmp);
+		d3f.y += 3.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3 - 1, z3, hessian_tmp);
+		d3f.y -= 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3 - 2, z3, hessian_tmp);
+		d3f.y += 1.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	else {
+		hessianAt(gradientField, x3, y3 + 1, z3, hessian_tmp);
+		d3f.y += (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3 - 1, z3, hessian_tmp);
+		d3f.y -= (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	d3f.z = 0;
+	if (z3 < 1) {
+		hessianAt(gradientField, x3, y3, z3, hessian_tmp);
+		d3f.z -= 3.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3, z3 + 1, hessian_tmp);
+		d3f.z += 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3, z3 + 2, hessian_tmp);
+		d3f.z -= 1.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	else if (z3 > 201 - 2) {
+		hessianAt(gradientField, x3, y3, z3, hessian_tmp);
+		d3f.z += 3.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3, z3 - 1, hessian_tmp);
+		d3f.z -= 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3, z3 - 2, hessian_tmp);
+		d3f.z += 1.0 / 2 * (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	else {
+		hessianAt(gradientField, x3, y3, z3 + 1, hessian_tmp);
+		d3f.z += (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+		hessianAt(gradientField, x3, y3, z3 - 1, hessian_tmp);
+		d3f.z -= (ev.x * (hessian_tmp[0][0] * ev.x + hessian_tmp[1][0] * ev.y + hessian_tmp[2][0] * ev.z) +
+			ev.y * (hessian_tmp[1][0] * ev.x + hessian_tmp[1][1] * ev.y + hessian_tmp[2][1] * ev.z) +
+			ev.z * (hessian_tmp[2][0] * ev.x + hessian_tmp[2][1] * ev.y + hessian_tmp[2][2] * ev.z));
+	}
+	return d3f.x * ev.x + d3f.y * ev.y + d3f.z * ev.z;
+}
+
+// second order accurate
+float fourth_directional_deriv(float3* gradientField, int x, int y, int z, float3& ev) {
+	float3 df4{};
+
+	df4.x = 0;
+	if (x < 1) {
+		df4.x -= 3.0 / 2 * third_directional_deriv(gradientField, x, y, z, ev);
+		df4.x += 2 * third_directional_deriv(gradientField, x + 1, y, z, ev);
+		df4.x -= 1.0 / 2 * third_directional_deriv(gradientField, x + 2, y, z, ev);
+	}
+	else if (x > 2048 - 2) {
+		df4.x += 3.0 / 2 * third_directional_deriv(gradientField, x, y, z, ev);
+		df4.x -= 2 * third_directional_deriv(gradientField, x - 1, y, z, ev);
+		df4.x += 1.0 / 2 * third_directional_deriv(gradientField, x - 2, y, z, ev);
+	}
+	else {
+		df4.x += third_directional_deriv(gradientField, x + 1, y, z, ev);
+		df4.x -= third_directional_deriv(gradientField, x - 1, y, z, ev);
+	}
+
+	df4.y = 0;
+	if (y < 1) {
+		df4.y -= 3.0 / 2 * third_directional_deriv(gradientField, x, y, z, ev);
+		df4.y += 2 * third_directional_deriv(gradientField, x, y + 1, z, ev);
+		df4.y -= 1.0 / 2 * third_directional_deriv(gradientField, x, y + 2, z, ev);
+	}
+	else if (y > 2048 - 2) {
+		df4.y += 3.0 / 2 * third_directional_deriv(gradientField, x, y, z, ev);
+		df4.y -= 2 * third_directional_deriv(gradientField, x, y - 1, z, ev);
+		df4.y += 1.0 / 2 * third_directional_deriv(gradientField, x, y - 2, z, ev);
+	}
+	else {
+		df4.y += third_directional_deriv(gradientField, x, y + 1, z, ev);
+		df4.y -= third_directional_deriv(gradientField, x, y - 1, z, ev);
+	}
+
+	df4.z = 0;
+	if (z < 1) {
+		df4.z -= 3.0 / 2 * third_directional_deriv(gradientField, x, y, z, ev);
+		df4.z += 2 * third_directional_deriv(gradientField, x, y, z + 1, ev);
+		df4.z -= 1.0 / 2 * third_directional_deriv(gradientField, x, y, z + 2, ev);
+	}
+	else if (z > 201 - 2) {
+		df4.z += 3.0 / 2 * third_directional_deriv(gradientField, x, y, z, ev);
+		df4.z -= 2 * third_directional_deriv(gradientField, x, y, z - 1, ev);
+		df4.z += 1.0 / 2 * third_directional_deriv(gradientField, x, y, z - 2, ev);
+	}
+	else {
+		df4.z += third_directional_deriv(gradientField, x, y, z + 1, ev);
+		df4.z -= third_directional_deriv(gradientField, x, y, z - 1, ev);
+	}
+
+	return df4.x * ev.x + df4.y * ev.y + df4.z * ev.z;
+}
+
+
 void segment_blob(
 	std::vector<std::tuple<int, int, int>>& points, 
 	std::vector<std::tuple<int,int,int>>& boundary, 
 	std::tuple<int, int, int>& local_max, 
 	float* laplacian,
+	float* gaussian,
 	float3* gradientField) {
 	int back = 0; 
 	if (!points.size() == 0) {
@@ -270,8 +670,6 @@ void segment_blob(
 	// breadth first search from the local max
 	// radial derivative  d^2 f / dr^2 
 	points.push_back(std::make_tuple(x_orig, y_orig, z_orig));
-
-		
 
 	while(points.size() > back) {
 		int x, y, z;
@@ -303,167 +701,131 @@ void segment_blob(
 			if (visited[(1024 + x2 - x_orig) + (1024 + y2 - y_orig)*2048 + (100 + z2 - z_orig)*2048*2048] == 1) {
 				continue;
 			}
-			
-			float next_laplacian = laplacian[x2 + 2048 * y2 + 2048 * 2048 * z2];
-
-			// instead of using laplacian, we look at whether the rate of change of the radial second derivative is positive.
-			// so compute d^2 f / dr^2 at new point, if greater than zero, end.
-			// d^2 f / dr^2 = grad ( grad(f) dot r ) dot r
-			
-			float sixth_order_centered[4] = { 0, 3.0 / 4, -3.0 / 20, 1.0 / 60 };
-			float sixth_order_forward[7] = { -49.0 / 20, 6.0, -15.0 / 2, 20.0 / 3, -15.0 / 4, 6.0 / 5, -1.0 / 6 };
-			float gradx = 0, grady = 0, gradz = 0;
-
-			float3 r;
-			r.x = x2 - x_orig;
-			r.y = y2 - y_orig;
-			r.z = z2 - z_orig;
-			float r_mag = sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-			r.x = r.x / r_mag;
-			r.y = r.y / r_mag;
-			r.z = r.z / r_mag;
-			
-			if (x2 < 3) {
-				for (int j = 0; j < 7; j++) {
-					float3 gradf = gradientField[(x2+j) + 2048 * y2 + 2048 * 2048 * z2];
-					//float3 r;
-					//r.x = x2 + j - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradx += gradfdotr * sixth_order_forward[j];
-				}
-			}
-			else if (x2 > 2048 - 4) {
-				for (int j = 0; j< 7; j++) {
-					float3 gradf = gradientField[(x2 - j) + 2048 * y2 + 2048 * 2048 * z2];
-					//float3 r;
-					//r.x = x2 - j - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradx += -gradfdotr * sixth_order_forward[j];
-				}
-			}
-			else {
-				for (int j = 1; j < 4; j++) {
-					float3 gradf = gradientField[(x2 - j) + 2048 * y2 + 2048 * 2048 * z2];
-					//float3 r;
-					//r.x = x2 - j - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradx += -gradfdotr * sixth_order_centered[j];
-
-					gradf = gradientField[(x2 + j) + 2048 * y2 + 2048 * 2048 * z2];
-					//r.x = x2 + j - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 - z_orig;
-					gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradx += gradfdotr * sixth_order_centered[j];
-				}
-			}
-
-
-			if (y2 < 3) {
-				for (int k = 0; k < 7; k++) {
-					float3 gradf = gradientField[x2 + 2048 * (y2+k) + 2048 * 2048 * z2];
-					//float3 r;
-					//r.x = x2 - x_orig;
-					//r.y = y2+k - y_orig;
-					//r.z = z2 - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					grady += gradfdotr * sixth_order_forward[k];
-				}
-			}
-			else if (y2 > 2048 - 4) {
-				for (int k = 0; k < 7; k++) {
-					float3 gradf = gradientField[x2 + 2048 * (y2 - k) + 2048 * 2048 * z2];
-					//float3 r;
-					//r.x = x2 - x_orig;
-					//r.y = y2 - k - y_orig;
-					//r.z = z2 - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;// ) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					grady += -gradfdotr * sixth_order_forward[k];
-				}
-			}
-			else {
-				for (int k = 1; k < 4; k++) {
-					float3 gradf = gradientField[x2 + 2048 * (y2 + k) + 2048 * 2048 * z2];
-					//float3 r;
-					//r.x = x2 - x_orig;
-					//r.y = y2 + k - y_orig;
-					//r.z = z2 - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					grady += gradfdotr * sixth_order_centered[k];
-
-					gradf = gradientField[x2 + 2048 * (y2 - k) + 2048 * 2048 * z2];
-					//r.x = x2 - x_orig;
-					//r.y = y2 - k - y_orig;
-					//r.z = z2 - z_orig;
-					gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					grady += -gradfdotr * sixth_order_centered[k];
-				}
-			}
-
-
-			if (z2 < 3) {
-
-				for (int l = 0; l < 7; l++) {
-					float3 gradf = gradientField[x2 + 2048 * y2  + 2048 * 2048 * (z2+l)];
-					//float3 r;
-					//r.x = x2 - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 + l -z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradz += gradfdotr * sixth_order_forward[l];
-				}
-			}
-			else if (z2 > 201 - 4) {
-				for (int l = 0; l < 7; l++) {
-					float3 gradf = gradientField[x2 + 2048 * y2 + 2048 * 2048 * (z2 - l)];
-					//float3 r;
-					//r.x = x2 - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 - l - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradz += -gradfdotr * sixth_order_forward[l];
-				}
-			}
-			else {
-
-				for (int l = 1; l < 4; l++) {
-					float3 gradf = gradientField[x2 + 2048 * y2 + 2048 * 2048 * (z2 + l)];
-
-					//float3 r;
-					//r.x = x2 - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 + l - z_orig;
-					float gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradz += gradfdotr * sixth_order_centered[l];
-
-					gradf = gradientField[x2 + 2048 * y2 + 2048 * 2048 * (z2 - l)];
-					//r.x = x2 - x_orig;
-					//r.y = y2 - y_orig;
-					//r.z = z2 - l - z_orig;
-					gradfdotr = gradf.x * r.x + gradf.y * r.y + gradf.z * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-					gradz += -gradfdotr * sixth_order_centered[l];
-
-				}
-			}
-			float3 next_gradient = gradientField[x2 + 2048 * y2 + 2048 * 2048 * z2];
-			float d2fdr2 = gradx * r.x + grady * r.y + gradz * r.z;//) / sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-			if (d2fdr2 >= 0 
-				//next_laplacian>= 0 // || next_laplacian < this_laplacian //-1/(sigma*sigma)*0.37
-				|| next_gradient.x * r.x + next_gradient.y * r.y + next_gradient.z * r.z >= 0
-				//|| next_gaussian > this_gaussian // solves kissing problem?
-				|| x2 == 0 || y2 == 0 || z2 == 0 || x2 == 2047 || y2 == 2047 || z2 == 200) {
-				// if laplacian is greater than or equal 0, then we're in the boundary.
-				// also if on boundary of image
+			if (x2 == 0 || y2 == 0 || z2 == 0 || x2 == 2047 || y2 == 2047 || z2 == 200) {
 				boundary.push_back(std::make_tuple(x2, y2, z2));
-			} else {
-				// if laplacian is less than 0, then we're in points
-				points.push_back(std::make_tuple(x2, y2, z2));
+			}
+			else {
+				float next_laplacian = laplacian[x2 + 2048 * y2 + 2048 * 2048 * z2];
+
+				// instead of using laplacian, we look at whether the rate of change of the radial second derivative is positive.
+				// so compute d^2 f / dr^2 at new point, if greater than zero, end.
+				// d^2 f / dr^2 = grad ( grad(f) dot r ) dot r
+
+				float sixth_order_centered[4] = { 0, 3.0 / 4, -3.0 / 20, 1.0 / 60 };
+				float sixth_order_forward[7] = { -49.0 / 20, 6.0, -15.0 / 2, 20.0 / 3, -15.0 / 4, 6.0 / 5, -1.0 / 6 };
+				float gradx = 0, grady = 0, gradz = 0;
+
+				std::array<std::array<float, 3>, 3> hessian = {};
+				hessianAt(gradientField, x2, y2, z2, hessian);
+
+				float3 r;
+				r.x = x2 - x_orig;
+				r.y = y2 - y_orig;
+				r.z = z2 - z_orig;
+				float r_mag = sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
+				r.x = r.x / r_mag;
+				r.y = r.y / r_mag;
+				r.z = r.z / r_mag;
+
+				float3 theta_hat;
+				theta_hat.x = -r.y / sqrt(1 - r.z * r.z);
+				theta_hat.y = r.x / sqrt(1 - r.z * r.z);
+				theta_hat.z = 0;
+				float3 phi_hat;
+				phi_hat.x = theta_hat.y * r.z;
+				phi_hat.y = -theta_hat.x * r.z;
+				phi_hat.z = -sqrt(1 - r.z * r.z);
+
+
+				float3 next_gradient = gradientField[x2 + 2048 * y2 + 2048 * 2048 * z2];
+				float next_grad_mag = sqrt(next_gradient.x * next_gradient.x + next_gradient.y * next_gradient.y + next_gradient.z * next_gradient.z);
+				float3 grad_dir;
+				grad_dir.x = next_gradient.x / next_grad_mag;
+				grad_dir.y = next_gradient.y / next_grad_mag;
+				grad_dir.z = next_gradient.z / next_grad_mag;
+
+				// what is the second derivative 
+				float d2fdg2 = grad_dir.x * (hessian[0][0] * grad_dir.x + hessian[1][0] * grad_dir.y + hessian[2][0] * grad_dir.z) +
+					grad_dir.y * (hessian[1][0] * grad_dir.x + hessian[1][1] * grad_dir.y + hessian[2][1] * grad_dir.z) +
+					grad_dir.z * (hessian[2][0] * grad_dir.x + hessian[2][1] * grad_dir.y + hessian[2][2] * grad_dir.z);
+
+				// 
+				float d2fdtheta2 = theta_hat.x * (hessian[0][0] * theta_hat.x + hessian[1][0] * theta_hat.y + hessian[2][0] * theta_hat.z) +
+					theta_hat.y * (hessian[1][0] * theta_hat.x + hessian[1][1] * theta_hat.y + hessian[2][1] * theta_hat.z) +
+					theta_hat.z * (hessian[2][0] * theta_hat.x + hessian[2][1] * theta_hat.y + hessian[2][2] * theta_hat.z);
+
+				float d2fdphi2 = phi_hat.x * (hessian[0][0] * phi_hat.x + hessian[1][0] * phi_hat.y + hessian[2][0] * phi_hat.z) +
+					phi_hat.y * (hessian[1][0] * phi_hat.x + hessian[1][1] * phi_hat.y + hessian[2][1] * phi_hat.z) +
+					phi_hat.z * (hessian[2][0] * phi_hat.x + hessian[2][1] * phi_hat.y + hessian[2][2] * phi_hat.z);
+
+				float d2fdr2 = r.x * (hessian[0][0] * r.x + hessian[1][0] * r.y + hessian[2][0] * r.z) +
+					r.y * (hessian[1][0] * r.x + hessian[1][1] * r.y + hessian[2][1] * r.z) +
+					r.z * (hessian[2][0] * r.x + hessian[2][1] * r.y + hessian[2][2] * r.z);
+
+				float hessianphitheta[3][2];
+				hessianphitheta[0][0] = hessian[0][0] * theta_hat.x + hessian[1][0] * theta_hat.y + hessian[2][0] * theta_hat.z;
+				hessianphitheta[1][0] = hessian[1][0] * theta_hat.x + hessian[1][1] * theta_hat.y + hessian[2][1] * theta_hat.z;
+				hessianphitheta[2][0] = hessian[2][0] * theta_hat.x + hessian[2][1] * theta_hat.y + hessian[2][2] * theta_hat.z;
+
+				hessianphitheta[0][1] = hessian[0][0] * phi_hat.x + hessian[1][0] * phi_hat.y + hessian[2][0] * phi_hat.z;
+				hessianphitheta[1][1] = hessian[1][0] * phi_hat.x + hessian[1][1] * phi_hat.y + hessian[2][1] * phi_hat.z;
+				hessianphitheta[2][1] = hessian[2][0] * phi_hat.x + hessian[2][1] * phi_hat.y + hessian[2][2] * phi_hat.z;
+
+				float hessianphitheta2[2][2];
+				hessianphitheta2[0][0] = hessianphitheta[0][0] * theta_hat.x + hessianphitheta[1][0] * theta_hat.y + hessianphitheta[2][0] * theta_hat.z;
+				hessianphitheta2[0][1] = hessianphitheta[0][1] * theta_hat.x + hessianphitheta[1][1] * theta_hat.y + hessianphitheta[2][1] * theta_hat.z;
+				hessianphitheta2[1][0] = hessianphitheta[0][0] * phi_hat.x + hessianphitheta[1][0] * phi_hat.y + hessianphitheta[2][0] * phi_hat.z;
+				hessianphitheta2[1][1] = hessianphitheta[0][1] * phi_hat.x + hessianphitheta[1][1] * phi_hat.y + hessianphitheta[2][1] * phi_hat.z;
+
+				float tr = hessianphitheta2[0][0] + hessianphitheta2[1][1];
+				float d = hessianphitheta2[0][0] * hessianphitheta2[1][1] - hessianphitheta2[0][1] * hessianphitheta2[1][0];
+				float lambda1 = (tr + sqrt(tr * tr - 4 * d)) / 2;
+				float lambda2 = (tr - sqrt(tr * tr - 4 * d)) / 2;
+
+				float eig1, eig2, eig3;
+				eigenvalues(hessian, eig1, eig2, eig3);
+				/*
+				// placeholder values if eigs are not positive
+				float d4fdeig1_4 = -1, d4fdeig2_4 = -1, d4fdeig3_4 = -1;
+
+				// this gives us the priciple curvature
+				float3 ev1, ev2, ev3;
+				eigenvector(hessian, eig1, ev1);
+				eigenvector(hessian, eig2, ev2);
+				eigenvector(hessian, eig3, ev3);
+
+				
+				if (eig1 >= 0) { // if eig1 >=0 check if the fourth derivative is >=0 
+					d4fdeig1_4 = fourth_directional_deriv(gradientField, x2, y2, z2, ev1);
+				}
+				if (eig2 >= 0) {
+					d4fdeig2_4 = fourth_directional_deriv(gradientField, x2, y2, z2, ev2);
+				}
+				if (eig3 >= 0) {
+					d4fdeig3_4 = fourth_directional_deriv(gradientField, x2, y2, z2, ev3);
+				}*/
+
+				if ( //(eig1 >= 0 && d4fdeig1_4 >=0) || (eig2 >= 0 && d4fdeig2_4 >=0) || (eig3 >= 0 && d4fdeig3_4 >= 0)
+					(eig1 >= 0) || (eig2 >= 0) || (eig3 >= 0 )
+					) {
+					//|| d2fdr2 >= 0 || lambda1 >= 0 || lambda2 >= 0
+					//d2fdg2 >=0
+					//((eig1 >=0) &&  (eig2>= 0)) || ((eig1>=0) && (eig3>=0)) || ((eig2>=0)&&(eig3>=0)) 
+					//eig1+eig2+eig3 >= 0
+					//|| d2fdr2 >= 0 
+					//gaussian[x2 + 2048 * y2 + 2048 * 2048 * z2] < 1)
+					//|| next_laplacian - d2fdr2 >= 0 // || next_laplacian < this_laplacian //-1/(sigma*sigma)*0.37
+					//|| next_gradient.x * r.x + next_gradient.y * r.y + next_gradient.z * r.z >= 0
+					//|| next_gaussian > this_gaussian // solves kissing problem?
+
+					// if laplacian is greater than or equal 0, then we're in the boundary.
+					// also if on boundary of image
+					boundary.push_back(std::make_tuple(x2, y2, z2));
+				}
+				else {
+					// if laplacian is less than 0, then we're in points
+					points.push_back(std::make_tuple(x2, y2, z2));
+				}
 			}
 			visited[(1024 + x2 - x_orig) + (1024 + y2 - y_orig) * 2048 + (100 + z2 - z_orig) * 2048 * 2048] = 1;
 		}
@@ -719,14 +1081,31 @@ uint16_t* load_tiff2(const char* filename) {
 
 int main()
 {
-	int threshold_405_lower = 160;
-	int threshold_405_higher = 170;
+	//std::array<std::array<float, 3>, 3> arr = { {{3.0,2.0,4.0}, {2.0,0.0,2.0}, {4.0,2.0,3.0}} };
+	//std::array<std::array<float, 3>, 3> arr = {{ {{7.0,0,0}}, {{0.0,2.0,0.0}}, {{0.0,0.0,1.0}} }};
+	//std::cout << "hello" << arr[0][0] << " " << arr[1][1] << " " << arr[2][2] << std::endl;
+
+	//float eig1=0, eig2=0, eig3=0;
+	//eigenvalues(arr, eig1, eig2, eig3);
+	//std::cout << eig1 << " " << eig2 << " " << eig3 << std::endl;
+
+
+	//float3 ev23{};
+
+	//eigenvector(arr, 8, ev23); 
+	//std::cout << "eigenvector: " << ev23.x << " " << ev23.y << " " << ev23.z << std::endl;
+	//return 0;
+
+	int threshold_405_lower = 120;
+	int threshold_405_higher = 171;
 	//std::cout << "please observe this dog..." << std::endl;
 	std::cout << "Loading DAPI...";
 	//std::vector<cv::Mat*>* mats = load_tiff("endogenous_0x_#1_New.tif");
 	uint16_t* stack = load_tiff2("endogenous_0x_#1_New.tif");
 	std::cout << " done." << std::endl;
 	time_t start, end;
+
+
 
 	uint16_t* filtered = new uint16_t[2048 * 2048 * 201];
 	std::cout << "Computing median filter...";
@@ -745,7 +1124,8 @@ int main()
 				}
 				else if ((*pointer) >= threshold_405_higher) {
 					*pointer = threshold_405_higher - threshold_405_lower;
-				} else {
+				}
+				else {
 					*pointer = (*pointer) - threshold_405_lower;
 				}
 				pointer++;
@@ -758,8 +1138,8 @@ int main()
 	//cv::Mat* new_mat = new cv::Mat(mats->at(0)->size().height, mats->at(0)->size().width, CV_32F);
 	std::cout << "Computing gaussian filter...";
 	time(&start);
-	int sigma = 25;
-	float* gaussian_result = gaussian_filter3D_parallel(filtered, sigma, sigma/2);
+	int sigma = 20;
+	float* gaussian_result = gaussian_filter3D_parallel(filtered, sigma, 10);
 	std::cout << "done." << std::endl;
 
 	time(&end);
@@ -772,8 +1152,8 @@ int main()
 	std::cout << "Found " << maxima.size() << " nuclei." << std::endl;
 	std::cout << "findMaxima took " << difftime(end, start) << " seconds." << std::endl;
 
-	//std::cout << "Redoing gaussian filter with smaller sigma for edge detection...";
-	//gaussian_result = gaussian_filter3D_parallel(filtered, sigma/2, sigma / 4);
+	//std::cout << "Redoing gaussian filter with larger sigma to eliminate heterochromatic puncta";
+	//gaussian_result = gaussian_filter3D_parallel(filtered, sigma*2, sigma);
 	//std::cout << "done." << std::endl;
 
 	float* laplacian = new float[2048 * 2048 * 201];
@@ -805,7 +1185,7 @@ int main()
 		blob->points.reserve(200000);
 		blob->boundary.reserve(20000);
 		blob->local_max = maxima.at(j);
-		segment_blob(blob->points, blob->boundary, maxima.at(j), laplacian, gradientField);
+		segment_blob(blob->points, blob->boundary, maxima.at(j), laplacian, gaussian_result, gradientField);
 		blobs.push_back(blob);
 		std::cout << "blob has " << blob->points.size() << " voxels" << std::endl;
 		std::cout << "boundary has " << blob->boundary.size() << " voxels" << std::endl;
@@ -815,28 +1195,65 @@ int main()
 	std::cout << "done." << std::endl;
 	std::cout << "blob segmentation took: " << difftime(end, start) << " seconds." << std::endl;
 
+	int num_good = 0;
+	for (int i = 0; i < blobs.size(); i++) {
+		if (blobs.at(i)->points.size() > 100000 && blobs.at(i)->points.size() < 1000000) {
+			num_good++;
+		}
+	}
+	std::cout << "Found " << num_good << " out of " << blobs.size() << " maxima to be good..." << std::endl;
+	delete[] gradientField;
+
+	std::cout << "Loading 488...";
+	uint16_t* stack488 = load_tiff2("endogenous_0x_#1_New_1.tif");
+	std::cout << "done." << std::endl;
+	pointer = stack488;
+	for (int z = 0; z < 201; z++) {
+		for (int y = 0; y < 2048; y++) {
+			for (int x = 0; x < 2048; x++) {
+				if ((*pointer) <= 160) {
+					*pointer = 0;
+				}
+				else {
+					*pointer = (*pointer) - 160;
+				}
+				pointer++;
+			}
+		}
+	}
+
+	//std::cout << "median filter 488...";
+	//uint16_t* median488 = new uint16_t[2048 * 2048 * 201];
+	//medianFilter3x3(stack488, median488);
+	//std::cout << "done." << std::endl;
+
 	//std::cout << "please observe this dog..." << std::endl;
 	std::cout << "Loading 594...";
 	//std::vector<cv::Mat*>* mats = load_tiff("endogenous_0x_#1_New.tif");
 	uint16_t* stack594 = load_tiff2("endogenous_0x_#1_New_2.tif");
 	std::cout << " done." << std::endl;
 
-	pointer = stack594;
+	std::cout << "median 594...";
+	uint16_t* median594 = new uint16_t[2048 * 2048 * 201];
+	medianFilter3x3(stack594, median594);
+	std::cout << "done." << std::endl;
+
+	pointer = median594;
 	for (int z = 0; z < 201; z++) {
 		for (int y = 0; y < 2048; y++) {
 			for (int x = 0; x < 2048; x++) {
-				if ((*pointer) <= 190) {
+				if ((*pointer) <= 130) {
 					*pointer = 0;
 				}
 				else {
-					*pointer = (*pointer) - 190;
+					*pointer = (*pointer) - 130;
 				}
 				pointer++;
 			}
 		}
 	}
 	std::cout << "computing 594 gaussian...";
-	float* gaussian_594 = gaussian_filter3D_parallel(stack594, 5, 2);
+	float* gaussian_594 = gaussian_filter3D_parallel(median594, 5, 2);
 	std::cout << "done." << std::endl; 
 
 	std::vector<std::tuple<int, int, int>> maxima594;
@@ -844,26 +1261,32 @@ int main()
 	std::cout << "Found " << maxima594.size() << " dots." << std::endl;
 
 	//std::cout << "please observe this dog..." << std::endl;
-	std::cout << "Loading 647...";
+	std::cout << "Loading 640...";
 	//std::vector<cv::Mat*>* mats = load_tiff("endogenous_0x_#1_New.tif");
 	uint16_t* stack647 = load_tiff2("endogenous_0x_#1_New_4.tif");
 	std::cout << " done." << std::endl;
-	pointer = stack647;
+
+	std::cout << "median 640..."; 
+	uint16_t* median640 = new uint16_t[2048 * 2048 * 201];
+	medianFilter3x3(stack647, median640);
+	std::cout << "done." << std::endl;
+
+	pointer = median640;
 	for (int z = 0; z < 201; z++) {
 		for (int y = 0; y < 2048; y++) {
 			for (int x = 0; x < 2048; x++) {
-				if ((*pointer) <= 190) {
+				if ((*pointer) <= 130) {
 					*pointer = 0;
 				}
 				else {
-					*pointer = (*pointer) - 190;
+					*pointer = (*pointer) - 130;
 				}
 				pointer++;
 			}
 		}
 	}
 	std::cout << "computing 647 gaussian...";
-	float* gaussian_647 = gaussian_filter3D_parallel(stack647, 5, 2);
+	float* gaussian_647 = gaussian_filter3D_parallel(median640, 5, 2);
 	std::cout << "done." << std::endl;
 
 	std::vector<std::tuple<int, int, int>> maxima647;
@@ -880,27 +1303,37 @@ int main()
 		cv::Mat dst(2048, 2048, CV_16UC3);
 		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
 
-		for (int j = 0; j < maxima.size(); j++) {
-			int z = std::get<2>(maxima.at(j));
-			if (abs(i - z) < 10) {
-				int cx = std::get<0>(maxima.at(j));
-				int cy = std::get<1>(maxima.at(j));
-				cv::rectangle(dst,cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 65535), cv::FILLED, cv::LINE_8);
-			}
-		}
-		if (blink && blobs.size() > 0) {
-			Blob* blob = blobs.at(k);
+		for(int l=0; l < blobs.size(); l++) {
+			Blob* blob = blobs.at(l);
+			std::tuple<int, int, int> max = blob->local_max;
 
-			for (int j = 0; j < blob->boundary.size(); j++) {
-				int x, y, z;
+			if (blob->points.size() > 100000 && blob->points.size() < 1000000) {
+				int z = std::get<2>(max);
+				if (abs(i - z) < 10) {
+					int cx = std::get<0>(max);
+					int cy = std::get<1>(max);
+					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 65535), cv::FILLED, cv::LINE_8);
+				}
 
-				std::tie(x, y, z) = blob->boundary.at(j);
+				for (int j = 0; j < blob->boundary.size(); j++) {
+					int x, y, z;
 
-				if (z == i) {
-					BGR& bgr = dst.ptr<BGR>(y)[x];
-					bgr.red = 0;
-					bgr.green = 255;
-					bgr.blue = 0;
+					std::tie(x, y, z) = blob->boundary.at(j);
+
+					if (z == i) {
+						if (l == k) {
+							BGR& bgr = dst.ptr<BGR>(y)[x];
+							bgr.red = 255;
+							bgr.green = 0;
+							bgr.blue = 0;
+						}
+						else {
+							BGR& bgr = dst.ptr<BGR>(y)[x];
+							bgr.red = 0;
+							bgr.green = 255;
+							bgr.blue = 0;
+						}
+					}
 				}
 			}
 		}
@@ -933,7 +1366,7 @@ int main()
 	i = 0;
 	k = 0;
 	do {
-		cv::Mat img(2048, 2048, CV_32F, laplacian + 2048 * 2048 * i);
+		cv::Mat img(2048, 2048, CV_32F, gaussian_result + 2048 * 2048 * i);
 		double min, max;
 		cv::minMaxLoc(img, &min, &max);
 		img = (img - min) / (max - min);
@@ -942,30 +1375,41 @@ int main()
 		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
 
 		//cv::Mat img(2048, 2048, CV_16U, stack + 2048 * 2048 * i);
+		for (int l = 0; l < blobs.size(); l++) {
+			Blob* blob = blobs.at(l);
+			std::tuple<int, int, int> max = blob->local_max;
 
-		for (int j = 0; j < maxima.size(); j++) {
-			int z = std::get<2>(maxima.at(j));
-			if (abs(i - z) < 10) {
-				int cx = std::get<0>(maxima.at(j));
-				int cy = std::get<1>(maxima.at(j));
-				cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 1), cv::FILLED, cv::LINE_8);
+			if (blob->points.size() > 100000 && blob->points.size() < 1000000) {
+				int z = std::get<2>(max);
+				if (abs(i - z) < 10) {
+					int cx = std::get<0>(max);
+					int cy = std::get<1>(max);
+					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+				}
+
+				for (int j = 0; j < blob->boundary.size(); j++) {
+					int x, y, z;
+
+					std::tie(x, y, z) = blob->boundary.at(j);
+
+					if (z == i) {
+						if (l == k) {
+							BGR& bgr = dst.ptr<BGR>(y)[x];
+							bgr.red = 255;
+							bgr.green = 0;
+							bgr.blue = 0;
+						}
+						else {
+							BGR& bgr = dst.ptr<BGR>(y)[x];
+							bgr.red = 0;
+							bgr.green = 255;
+							bgr.blue = 0;
+						}
+					}
+				}
 			}
 		}
-		Blob* blob = blobs.at(k);
-
-		for (int j = 0; j < blob->boundary.size(); j++) {
-			int x, y, z;
-
-			std::tie(x, y, z) = blob->boundary.at(j);
-
-			if (z == i) {
-				BGR_float& bgr = dst.ptr<BGR_float>(y)[x];
-				bgr.red = 0;
-				bgr.green = 1;
-				bgr.blue = 0;
-			}
-		}
-
+		
 		cv::Mat resized(512, 512, CV_32F);
 		//cv::Mat resized(512, 512, CV_16U);
 		cv::resize(dst, resized, cv::Size(512, 512));
@@ -993,6 +1437,141 @@ int main()
 
 	} while (key != 27);
 
+
+	// on this screen we want to display a single cell with its dots
+	const int blue_pixel_lower = 140;
+	const int blue_pixel_upper = 150;
+
+	const int green_pixel_lower = 0;
+	const int green_pixel_upper = 1;
+
+	const int red_pixel_lower = 0;
+	const int red_pixel_upper = 1;
+
+	const int white_pixel_lower = 0;
+	const int white_pixel_upper = 1;
+	k = 0;
+	i = 0;
+	do {
+		int nx, ny, nz;
+		Blob* blob = blobs.at(k);
+		std::tie(nx,ny,nz) = blob->local_max;
+		cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
+
+		// we are going to look at range from maxima-150 to maxima+150
+		for (int rx = -200; rx <= 200; rx++) {
+			if (nx + rx < 0 || nx + rx > 2047) {
+				continue;
+			}
+			for (int ry = -200; ry <= 200; ry++) {
+				if (ny + ry < 0 || ny + ry > 2047) {
+					continue;
+				}
+				BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
+
+				uint16_t green = median594[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * i];
+				if (green < green_pixel_lower) bgr.green = 0;
+				else if (green > green_pixel_upper) bgr.green = 255 * 255;
+				else bgr.green = (green - green_pixel_lower) * (255 * 255/ green_pixel_upper);
+
+				uint16_t blue = stack[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * i];
+				if (blue < blue_pixel_lower) bgr.blue = 0;
+				else if (blue > blue_pixel_upper) bgr.blue = 255 * 255;
+				else bgr.blue = (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper);
+				
+				uint16_t red = median640[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * i];
+				if (red < red_pixel_lower) bgr.red = 0;
+				else if (red > red_pixel_upper) bgr.red = 255 * 255;
+				else bgr.red = (red - red_pixel_lower) * (255 * 255 / red_pixel_upper);
+
+				
+				uint16_t white = stack488[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * i];
+				if (white <= white_pixel_lower) {
+					//bgr.red = 
+				}
+				else if (white > white_pixel_upper) {
+					bgr.red = 255 * 255; 
+					bgr.green = 255 * 255;
+					bgr.blue = 255 * 255;
+				}
+				else {
+					bgr.red = (white - white_pixel_lower) * (255 * 255 / white_pixel_upper);
+					bgr.green = bgr.red;
+					bgr.blue = bgr.red;
+				}
+			}
+		}
+		cv::Mat channels[3];
+		cv::split(img, channels);
+
+		cv::Mat greenMat, redMat;
+		channels[1].convertTo(greenMat,CV_32F);
+		channels[2].convertTo(redMat, CV_32F);
+
+		cv::Point2d point = cv::phaseCorrelate(greenMat, redMat);
+		std::cout << "phase correlate: (" << point.x << ", " << point.y << ")" << std::endl;
+
+		for (int j = 0; j < blob->boundary.size(); j++) {
+			int x, y, z;
+
+			std::tie(x, y, z) = blob->boundary.at(j);
+			
+			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+			if (z == i) {
+					BGR& bgr = img.ptr<BGR>(y-ny + 200)[x-nx+200];
+					bgr.red = 255*255;
+					bgr.green = 255*255;
+					bgr.blue = 255*255;
+
+			}
+		}
+
+		// for all the dots, show their outline
+		for (int j = 0; j < maxima594.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = maxima594.at(j);
+			
+			if ((dx - nx) * (dx - nx) + (dy - ny) * (dy - ny) + (dz - nz) * (dz - nz) <= 125 * 125) {
+			}
+
+		}
+
+
+		cv::imshow("Display window", img);
+		key = cv::waitKey(0);
+		if (key == 's') {
+			i = (i + 1) % 201;
+		}
+		else if (key == 'w') {
+			i = (201 + i - 1) % 201;
+		}
+		else if (key == 'a') {
+			do {
+				k = (k + 1) % blobs.size();
+			} while (blobs.at(k)->points.size() < 100000 || blobs.at(k)->points.size() > 1000000);
+			i = std::get<2>(blobs.at(k)->local_max);
+		}
+		else if (key == 'd') {
+			do {
+				k = (blobs.size() + k - 1) % blobs.size();
+			} while (blobs.at(k)->points.size() < 100000 || blobs.at(k)->points.size() > 1000000);
+			i = std::get<2>(blobs.at(k)->local_max);
+		}
+		else {
+			//blink = !blink;
+		}
+	} while (key != 27);
+	
+
+	// make upper and lower limits
+
+	// show up close version of cell, with dots
+	// nuclei is dapi
+	// 594 is 
+	// cell radius is 50
+	// so maybe 150 by 150 by 75 box
+
+
 	// compare to ground truth
 	FILE* groundtruth_405 = fopen("405_groundtruth.csv", "r");
 	std::vector<std::tuple<int, int, int>> groundtruth_405_maxima;
@@ -1007,9 +1586,9 @@ int main()
 
 	std::vector<std::tuple<int, int, int>> maxima_notfound;
 	int found = 0;
-	for (int i = 0; i < maxima.size(); i++) {
+	for (int i = 0; i < blobs.size(); i++) {
 		int max_x, max_y, max_z;
-		std::tie(max_x, max_y, max_z) = maxima.at(i);
+		std::tie(max_x, max_y, max_z) = blobs.at(i)->local_max;
 		int imatch = -1;
 		for (int j = 0; j < groundtruth_405_maxima.size(); j++) {
 			int true_x, true_y, true_z; 
@@ -1042,9 +1621,9 @@ int main()
 		int max_x, max_y, max_z;
 		std::tie(max_x, max_y, max_z) = groundtruth_405_maxima.at(i);
 		int imatch = -1;
-		for (int j = 0; j < maxima.size(); j++) {
+		for (int j = 0; j < blobs.size(); j++) {
 			int true_x, true_y, true_z;
-			std::tie(true_x, true_y, true_z) = maxima.at(j);
+			std::tie(true_x, true_y, true_z) = blobs.at(j)->local_max;
 			if ((max_x - true_x) * (max_x - true_x) + (max_y - true_y) * (max_y - true_y) + (max_z - true_z) * (max_z - true_z) < 50 * 50) {
 				imatch = j;
 			}
@@ -1068,12 +1647,108 @@ int main()
 		}
 	}
 
+	// give nuclei their id
+
+	// match dots with their closest nuclei, also keep track of second closest.
+	
+	// this is the nuclei, maybe we need an id to go along with it.
 	FILE* maxima_csv = fopen("405_maxima.csv", "w");
-	fprintf(maxima_csv, "x,y,z\n");
+	fprintf(maxima_csv, "id,x,y,z,closest_nuclei:id,x,y,z,distance,second_closts:id,x,y,z,distance\n");
 	for (int i = 0; i < maxima.size(); i++) {
 		int max_x, max_y, max_z;
 		std::tie(max_x, max_y, max_z) = maxima.at(i);
 		fprintf(maxima_csv, "%d,%d,%d\n", max_x, max_y, max_z);
 	}
 	fclose(maxima_csv);
+
+
+	// make the dots csv
+	// obviously we need x,y,z,channel, 
+	// also closest nuclei id, and x,y,z
+	FILE* dots_csv = fopen("dots.csv", "w");
+	fprintf(dots_csv, "id,x,y,z,cn_id,cn_x,cn_y,cn_z,channel\n");
+	for (int i = 0; i < maxima594.size(); i++) {
+		int x, y, z;
+		std::tie(x, y, z) = maxima594.at(i);
+
+		int cn_x, cn_y, cn_z, cn_id = 0;
+		std::tie(cn_x, cn_y, cn_z) = maxima.at(0);
+
+		float closest = (x - cn_x) * (x - cn_x) + (y - cn_y) * (y - cn_y) + (z - cn_z) * (z - cn_z);
+		for (int j = 1; j < blobs.size(); j++) {
+			if (blobs.at(j)->points.size() < 100000 || blobs.at(j)->points.size() > 1000000) continue;
+
+			int n_x, n_y, n_z;
+			std::tie(n_x, n_y, n_z) = blobs.at(j)->local_max;
+			float this_dist = (x - n_x) * (x - n_x) + (y - n_y) * (y - n_y) + (z - n_z) * (z - n_z);
+			if (this_dist < closest) {
+				closest = this_dist;
+				cn_x = n_x;
+				cn_y = n_y;
+				cn_z = n_z;
+				cn_id = j;
+			}
+		}
+		if (closest < 125 * 125) {
+			fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,594\n", i, x, y, z, cn_id, cn_x, cn_y, cn_z);
+		}
+	}
+
+	for (int i = 0; i < maxima647.size(); i++) {
+		int x, y, z;
+		std::tie(x, y, z) = maxima647.at(i);
+
+		int cn_x, cn_y, cn_z, cn_id = maxima594.size();
+		std::tie(cn_x, cn_y, cn_z) = maxima.at(0);
+
+		float closest = (x - cn_x) * (x - cn_x) + (y - cn_y) * (y - cn_y) + (z - cn_z) * (z - cn_z);
+		for (int j = 1; j < blobs.size(); j++) {
+			if (blobs.at(j)->points.size() < 100000 || blobs.at(j)->points.size() > 1000000) continue;
+			int n_x, n_y, n_z;
+			std::tie(n_x, n_y, n_z) = blobs.at(j)->local_max;
+			float this_dist = (x - n_x) * (x - n_x) + (y - n_y) * (y - n_y) + (z - n_z) * (z - n_z);
+			if (this_dist < closest) {
+				closest = this_dist;
+				cn_x = n_x;
+				cn_y = n_y;
+				cn_z = n_z;
+				cn_id = j;
+			}
+		}
+		fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,640\n", i + maxima594.size(), x, y, z, cn_id, cn_x, cn_y, cn_z);
+	}
+	fclose(dots_csv);
+	std::cout << "Wrote dots.csv" << std::endl;
+	std::cout << "Calculating image shifts...";
+
+	// calculating phase shifts between 488, 594, and 640
+	cv::Mat project488(2048, 2048, CV_32FC1);
+	project488.setTo(cv::Scalar::all(0));
+	cv::Mat project594(2048, 2048, CV_32FC1);
+	project594.setTo(cv::Scalar::all(0));
+	cv::Mat project640(2048, 2048, CV_32FC1);
+	project640.setTo(cv::Scalar::all(0));
+	for (int z = 0; z < 201; z++) {
+		for (int y = 0; y < 2048; y++) {
+			for (int x = 0; x < 2048; x++) {
+				float& f488 = project488.ptr<float>(y)[x];
+				float& f594 = project594.ptr<float>(y)[x];
+				float& f640 = project640.ptr<float>(y)[x];
+				f488 += stack488[x + 2048 * y + 2048 * 2048 * z];// / 201.0;
+				f594 += gaussian_594[x + 2048 * y + 2048 * 2048 * z];// / 201.0;
+				f488 += gaussian_647[x + 2048 * y + 2048 * 2048 * z];// / 201.0;
+				break;
+			}
+		}
+	}
+	
+	cv::Point2d shift_488_594 = cv::phaseCorrelate(project488, project594);
+	cv::Point2d shift_594_640 = cv::phaseCorrelate(project594, project640);
+	cv::Point2d shift_640_488 = cv::phaseCorrelate(project640, project488);
+	std::cout << "done." << std::endl;
+	std::cout << "488 to 594 shift: (" << shift_488_594.x << ", " << shift_488_594.y << ")" << std::endl; 
+	std::cout << "594 to 640 shift: (" << shift_594_640.x << ", " << shift_594_640.y << ")" << std::endl;
+	std::cout << "640 to 488 shift: (" << shift_640_488.x << ", " << shift_640_488.y << ")" << std::endl;
+
+
 };
