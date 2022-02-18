@@ -1,6 +1,7 @@
 ﻿#include <iostream>
 #include <cmath>
 #include <tuple>
+#include <optional>
 #include <stack>
 #include <concurrent_vector.h>
 #include <time.h>
@@ -74,18 +75,34 @@ public:
 	std::vector<std::tuple<int, int, int>> boundary;
 	std::tuple<int, int, int> local_max;
 
+	int size() {
+		return points.size();
+	}
+	
 	//virtual void to_csv(char buf[]) = 0;
 };
-
+class Dot;
 class Nucleus : public Blob {
+	const int size_upper_limit = 1000000;
+	const int size_lower_limit = 100000;
 public:
 	int id;
+	std::vector<Dot*> close_dots594;
+	std::vector<Dot*> close_dots640;
 
+	bool validSize() {
+		return points.size() > size_lower_limit && points.size() < size_upper_limit;
+	}
 };
-
 class Dot : public Blob {
+	const int size_upper_limit = 2000;
+	const int size_lower_limit = 200;
+public:
 	int id; 
-
+	
+	bool validSize() {
+		return points.size() > size_lower_limit && points.size() < size_upper_limit;
+	}
 };
 
 void gaussianElimination(std::array<std::array<float, 3>,3> mat) {
@@ -647,8 +664,6 @@ void segment_blob(
 	std::vector<std::tuple<int, int, int>>& points, 
 	std::vector<std::tuple<int,int,int>>& boundary, 
 	std::tuple<int, int, int>& local_max, 
-	float* laplacian,
-	float* gaussian,
 	float3* gradientField) {
 	int back = 0; 
 	if (!points.size() == 0) {
@@ -705,7 +720,6 @@ void segment_blob(
 				boundary.push_back(std::make_tuple(x2, y2, z2));
 			}
 			else {
-				float next_laplacian = laplacian[x2 + 2048 * y2 + 2048 * 2048 * z2];
 
 				// instead of using laplacian, we look at whether the rate of change of the radial second derivative is positive.
 				// so compute d^2 f / dr^2 at new point, if greater than zero, end.
@@ -1156,13 +1170,13 @@ int main()
 	//gaussian_result = gaussian_filter3D_parallel(filtered, sigma*2, sigma);
 	//std::cout << "done." << std::endl;
 
-	float* laplacian = new float[2048 * 2048 * 201];
-	std::cout << "computing laplacian...";             
-	time(&start);
-	laplacianFilter3D(gaussian_result, laplacian);
-	std::cout << "done." << std::endl; 
-	time(&end);
-	std::cout << "Laplacian filter took: " << difftime(end, start) << " seconds." << std::endl;
+	//float* laplacian = new float[2048 * 2048 * 201];
+	//std::cout << "computing laplacian...";             
+	//time(&start);
+	//laplacianFilter3D(gaussian_result, laplacian);
+	//std::cout << "done." << std::endl; 
+	//time(&end);
+	//std::cout << "Laplacian filter took: " << difftime(end, start) << " seconds." << std::endl;
 
 	int gradientfieldsize = 2048 * 2048 * 201;
 	float3* gradientField = new float3[gradientfieldsize];
@@ -1178,15 +1192,16 @@ int main()
 	//return 0;
 
 	std::cout << "segmenting blobs...";
-	std::vector<Blob*> blobs;
+	std::vector<Nucleus*> nucleii;
 	time(&start);
 	for (int j = 0; j < maxima.size(); j++) {
-		Blob* blob = new Blob;
+		Nucleus* blob = new Nucleus;
+		blob->id = j; 
 		blob->points.reserve(200000);
 		blob->boundary.reserve(20000);
 		blob->local_max = maxima.at(j);
-		segment_blob(blob->points, blob->boundary, maxima.at(j), laplacian, gaussian_result, gradientField);
-		blobs.push_back(blob);
+		segment_blob(blob->points, blob->boundary, maxima.at(j), gradientField);
+		nucleii.push_back(blob);
 		std::cout << "blob has " << blob->points.size() << " voxels" << std::endl;
 		std::cout << "boundary has " << blob->boundary.size() << " voxels" << std::endl;
 	}
@@ -1196,13 +1211,12 @@ int main()
 	std::cout << "blob segmentation took: " << difftime(end, start) << " seconds." << std::endl;
 
 	int num_good = 0;
-	for (int i = 0; i < blobs.size(); i++) {
-		if (blobs.at(i)->points.size() > 100000 && blobs.at(i)->points.size() < 1000000) {
+	for (int i = 0; i < nucleii.size(); i++) {
+		if(nucleii.at(i)->validSize()) {
 			num_good++;
 		}
 	}
-	std::cout << "Found " << num_good << " out of " << blobs.size() << " maxima to be good..." << std::endl;
-	delete[] gradientField;
+	std::cout << "Found " << num_good << " out of " << nucleii.size() << " maxima to be good..." << std::endl;
 
 	std::cout << "Loading 488...";
 	uint16_t* stack488 = load_tiff2("endogenous_0x_#1_New_1.tif");
@@ -1260,6 +1274,26 @@ int main()
 	findMaxima(gaussian_594, maxima594);
 	std::cout << "Found " << maxima594.size() << " dots." << std::endl;
 
+	std::cout << "computing 594 gradient field...";
+	time(&start);
+	gradientField3d(gaussian_594, gradientField);
+	std::cout << "done." << std::endl;
+	time(&end);
+	std::cout << "Gradient field took: " << difftime(end, start) << " seconds." << std::endl;
+
+	std::vector<Dot*> dots594;
+	for (int j = 0; j < maxima594.size(); j++) {
+		Dot* blob = new Dot;
+		blob->id = j;
+		blob->points.reserve(2000);
+		blob->boundary.reserve(200);
+		blob->local_max = maxima594.at(j);
+		segment_blob(blob->points, blob->boundary, maxima594.at(j), gradientField);
+		dots594.push_back(blob);
+		std::cout << "blob has " << blob->points.size() << " voxels" << std::endl;
+		std::cout << "boundary has " << blob->boundary.size() << " voxels" << std::endl;
+	}
+
 	//std::cout << "please observe this dog..." << std::endl;
 	std::cout << "Loading 640...";
 	//std::vector<cv::Mat*>* mats = load_tiff("endogenous_0x_#1_New.tif");
@@ -1293,6 +1327,95 @@ int main()
 	findMaxima(gaussian_647, maxima647);
 	std::cout << "Found " << maxima647.size() << " dots." << std::endl;
 
+	std::cout << "computing 647 gradient field...";
+	time(&start);
+	gradientField3d(gaussian_647, gradientField);
+	std::cout << "done." << std::endl;
+	time(&end);
+	std::cout << "Gradient field took: " << difftime(end, start) << " seconds." << std::endl;
+
+	std::vector<Dot*> dots647;
+	for (int j = 0; j < maxima647.size(); j++) {
+		Dot* blob = new Dot;
+		blob->id = j;
+		blob->points.reserve(2000);
+		blob->boundary.reserve(200);
+		blob->local_max = maxima647.at(j);
+		segment_blob(blob->points, blob->boundary, maxima647.at(j), gradientField);
+		dots594.push_back(blob);
+		std::cout << "blob has " << blob->points.size() << " voxels" << std::endl;
+		std::cout << "boundary has " << blob->boundary.size() << " voxels" << std::endl;
+	}
+
+	// make the dots csv
+// obviously we need x,y,z,channel, 
+// also closest nuclei id, and x,y,z
+	FILE* dots_csv = fopen("dots.csv", "w");
+	fprintf(dots_csv, "id,x,y,z,cn_id,cn_x,cn_y,cn_z,channel\n");
+	for (int i = 0; i < dots594.size(); i++) {
+		Dot* dot = dots594.at(i);
+		if (!dot->validSize()) continue;
+		int x, y, z;
+		std::tie(x, y, z) = dot->local_max;
+
+		int cn_x, cn_y, cn_z, cn_id = 0;
+		Nucleus* nuc = nucleii.at(0);
+		std::tie(cn_x, cn_y, cn_z) = nuc->local_max;
+
+		float closest = (x - cn_x) * (x - cn_x) + (y - cn_y) * (y - cn_y) + (z - cn_z) * (z - cn_z);
+		for (int j = 1; j < nucleii.size(); j++) {
+			if (!nucleii.at(j)->validSize()) continue;
+
+			int n_x, n_y, n_z;
+			std::tie(n_x, n_y, n_z) = nucleii.at(j)->local_max;
+			float this_dist = (x - n_x) * (x - n_x) + (y - n_y) * (y - n_y) + (z - n_z) * (z - n_z);
+			if (this_dist < closest) {
+				nuc = nucleii.at(j);
+				closest = this_dist;
+				cn_x = n_x;
+				cn_y = n_y;
+				cn_z = n_z;
+				cn_id = j;
+			}
+		}
+		if (closest < 125 * 125) {
+			nuc->close_dots594.push_back(dot);
+			fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,594\n", i, x, y, z, cn_id, cn_x, cn_y, cn_z);
+		}
+	}
+
+	for (int i = 0; i < dots647.size(); i++) {
+		Dot* dot = dots647.at(i);
+		int x, y, z;
+		std::tie(x, y, z) = dot->local_max;
+
+		int cn_x, cn_y, cn_z, cn_id = dots594.size();
+		Nucleus* nuc = nucleii.at(0);
+		std::tie(cn_x, cn_y, cn_z) = nuc->local_max;
+
+		float closest = (x - cn_x) * (x - cn_x) + (y - cn_y) * (y - cn_y) + (z - cn_z) * (z - cn_z);
+		for (int j = 1; j < nucleii.size(); j++) {
+			if (!nucleii.at(j)->validSize()) continue;
+			int n_x, n_y, n_z;
+			std::tie(n_x, n_y, n_z) = nucleii.at(j)->local_max;
+			float this_dist = (x - n_x) * (x - n_x) + (y - n_y) * (y - n_y) + (z - n_z) * (z - n_z);
+			if (this_dist < closest) {
+				nuc = nucleii.at(j);
+				closest = this_dist;
+				cn_x = n_x;
+				cn_y = n_y;
+				cn_z = n_z;
+				cn_id = j;
+			}
+		}
+		if (closest < 125 * 125) {
+			nuc->close_dots640.push_back(dot);
+			fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,640\n", i + maxima594.size(), x, y, z, cn_id, cn_x, cn_y, cn_z);
+		}
+	}
+	fclose(dots_csv);
+	std::cout << "Wrote dots.csv" << std::endl;
+
 	int i = 0;
 	int k = 0;
 	bool blink = true;
@@ -1303,11 +1426,11 @@ int main()
 		cv::Mat dst(2048, 2048, CV_16UC3);
 		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
 
-		for(int l=0; l < blobs.size(); l++) {
-			Blob* blob = blobs.at(l);
-			std::tuple<int, int, int> max = blob->local_max;
+		for(int l=0; l < nucleii.size(); l++) {
+			Nucleus* nuc = nucleii.at(l);
+			std::tuple<int, int, int> max = nuc->local_max;
 
-			if (blob->points.size() > 100000 && blob->points.size() < 1000000) {
+			if (nuc->validSize()) {
 				int z = std::get<2>(max);
 				if (abs(i - z) < 10) {
 					int cx = std::get<0>(max);
@@ -1315,10 +1438,10 @@ int main()
 					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 65535), cv::FILLED, cv::LINE_8);
 				}
 
-				for (int j = 0; j < blob->boundary.size(); j++) {
+				for (int j = 0; j < nuc->boundary.size(); j++) {
 					int x, y, z;
 
-					std::tie(x, y, z) = blob->boundary.at(j);
+					std::tie(x, y, z) = nuc->boundary.at(j);
 
 					if (z == i) {
 						if (l == k) {
@@ -1350,12 +1473,12 @@ int main()
 			i = (201 + i - 1) % 201;
 		}
 		else if (key == 'a') {
-			k = (k + 1) % blobs.size();
-			i = std::get<2>(blobs.at(k)->local_max);
+			k = (k + 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
 		}
 		else if (key == 'd') {
-			k = (blobs.size() + k - 1) % blobs.size();
-			i = std::get<2>(blobs.at(k)->local_max);
+			k = (nucleii.size() + k - 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
 		}
 		else {
 			//blink = !blink;
@@ -1375,11 +1498,11 @@ int main()
 		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
 
 		//cv::Mat img(2048, 2048, CV_16U, stack + 2048 * 2048 * i);
-		for (int l = 0; l < blobs.size(); l++) {
-			Blob* blob = blobs.at(l);
-			std::tuple<int, int, int> max = blob->local_max;
+		for (int l = 0; l < nucleii.size(); l++) {
+			Nucleus* nuc = nucleii.at(l);
+			std::tuple<int, int, int> max = nuc->local_max;
 
-			if (blob->points.size() > 100000 && blob->points.size() < 1000000) {
+			if (nuc->validSize()) {
 				int z = std::get<2>(max);
 				if (abs(i - z) < 10) {
 					int cx = std::get<0>(max);
@@ -1387,10 +1510,10 @@ int main()
 					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
 				}
 
-				for (int j = 0; j < blob->boundary.size(); j++) {
+				for (int j = 0; j < nuc->boundary.size(); j++) {
 					int x, y, z;
 
-					std::tie(x, y, z) = blob->boundary.at(j);
+					std::tie(x, y, z) = nuc->boundary.at(j);
 
 					if (z == i) {
 						if (l == k) {
@@ -1424,12 +1547,12 @@ int main()
 			i = (201 + i - 1) % 201;
 		}
 		else if (key == 'a') {
-			k = (k + 1) % blobs.size();
-			i = std::get<2>(blobs.at(k)->local_max);
+			k = (k + 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
 		}
 		else if (key == 'd') {
-			k = (blobs.size() + k - 1) % blobs.size();
-			i = std::get<2>(blobs.at(k)->local_max);
+			k = (nucleii.size() + k - 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
 		}
 		else {
 			//blink = !blink;
@@ -1439,8 +1562,8 @@ int main()
 
 
 	// on this screen we want to display a single cell with its dots
-	const int blue_pixel_lower = 140;
-	const int blue_pixel_upper = 150;
+	const int blue_pixel_lower = 120;
+	const int blue_pixel_upper = 200;
 
 	const int green_pixel_lower = 0;
 	const int green_pixel_upper = 1;
@@ -1454,8 +1577,8 @@ int main()
 	i = 0;
 	do {
 		int nx, ny, nz;
-		Blob* blob = blobs.at(k);
-		std::tie(nx,ny,nz) = blob->local_max;
+		Nucleus* nuc = nucleii.at(k);
+		std::tie(nx,ny,nz) = nuc->local_max;
 		cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
 
 		// we are going to look at range from maxima-150 to maxima+150
@@ -1511,10 +1634,10 @@ int main()
 		cv::Point2d point = cv::phaseCorrelate(greenMat, redMat);
 		std::cout << "phase correlate: (" << point.x << ", " << point.y << ")" << std::endl;
 
-		for (int j = 0; j < blob->boundary.size(); j++) {
+		for (int j = 0; j < nuc->boundary.size(); j++) {
 			int x, y, z;
 
-			std::tie(x, y, z) = blob->boundary.at(j);
+			std::tie(x, y, z) = nuc->boundary.at(j);
 			
 			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
 			if (z == i) {
@@ -1527,16 +1650,31 @@ int main()
 		}
 
 		// for all the dots, show their outline
-		for (int j = 0; j < maxima594.size(); j++) {
+		for (int j = 0; j < nuc->close_dots594.size(); j++) {
 			int dx, dy, dz;
-			std::tie(dx, dy, dz) = maxima594.at(j);
+			std::tie(dx, dy, dz) = nuc->close_dots594.at(j)->local_max;
 			
-			if ((dx - nx) * (dx - nx) + (dy - ny) * (dy - ny) + (dz - nz) * (dz - nz) <= 125 * 125) {
+			if ( ((dz - i) < 5 && i-dz < 5)) {
+				// if we are close enough 
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255*255, 255 * 255, 255*255), 1, 8, 0);
+
 			}
 
 		}
 
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_dots640.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_dots640.at(j)->local_max;
 
+			if (((dz - i) < 5 && i - dz < 5)) {
+				//cv::rectangle(img, cv::Point(dx - 5, dy - 5), cv::Point(dx + 5, dy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 0, 255*255), 1, 8, 0);
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+			}
+
+		}
 		cv::imshow("Display window", img);
 		key = cv::waitKey(0);
 		if (key == 's') {
@@ -1547,22 +1685,196 @@ int main()
 		}
 		else if (key == 'a') {
 			do {
-				k = (k + 1) % blobs.size();
-			} while (blobs.at(k)->points.size() < 100000 || blobs.at(k)->points.size() > 1000000);
-			i = std::get<2>(blobs.at(k)->local_max);
+				k = (k + 1) % nucleii.size();
+			} while (!nucleii.at(k)->validSize());
+			i = std::get<2>(nucleii.at(k)->local_max);
 		}
 		else if (key == 'd') {
 			do {
-				k = (blobs.size() + k - 1) % blobs.size();
-			} while (blobs.at(k)->points.size() < 100000 || blobs.at(k)->points.size() > 1000000);
-			i = std::get<2>(blobs.at(k)->local_max);
+				k = (nucleii.size() + k - 1) % nucleii.size();
+			} while (!nucleii.at(k)->validSize());
+			i = std::get<2>(nucleii.at(k)->local_max);
 		}
 		else {
 			//blink = !blink;
 		}
 	} while (key != 27);
 	
+	// 2d maxproject
+	k = 0;
+	do {
+		int nx, ny, nz;
+		Nucleus* nuc = nucleii.at(k);
+		std::tie(nx, ny, nz) = nuc->local_max;
+		i = nz;
+		cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
 
+		// we are going to look at range from maxima-150 to maxima+150
+		for (int rx = -200; rx <= 200; rx++) {
+			if (nx + rx < 0 || nx + rx > 2047) {
+				continue;
+			}
+			for (int ry = -200; ry <= 200; ry++) {
+				if (ny + ry < 0 || ny + ry > 2047) {
+					continue;
+				}
+				BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
+
+				for (int zh = i - 50; zh < i + 50; zh++) {
+					if (zh < 0) continue;
+					if (zh > 200) break;
+					uint16_t green = median594[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * zh];
+					if (bgr.green < 255 * 255 && bgr.green < (green - green_pixel_lower) * (255 * 255 / green_pixel_upper)) {
+						if (green > green_pixel_upper) bgr.green = 255 * 255;
+						else bgr.green = (green - green_pixel_lower) * (255 * 255 / green_pixel_upper);
+					}
+					uint16_t blue = stack[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * zh];
+
+					if (bgr.blue < 255 * 255 && bgr.blue < (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper)) {
+						if (blue > blue_pixel_upper) bgr.blue = 255 * 255;
+						else bgr.blue = (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper);
+					}
+
+					uint16_t red = median640[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * zh];
+					if (bgr.red < 255 * 255 && bgr.red < (red - red_pixel_lower) * (255 * 255 / red_pixel_upper)) {
+						if (red > red_pixel_upper) bgr.red = 255 * 255;
+						else bgr.red = (red - red_pixel_lower) * (255 * 255 / red_pixel_upper);
+					}
+				}
+			}
+		}
+
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_dots594.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_dots594.at(j)->local_max;
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255*255, 255 * 255, 255*255), 1, 8, 0);
+
+		}
+
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_dots640.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_dots640.at(j)->local_max;
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+		}
+
+		for (int j = 0; j < nuc->boundary.size(); j++) {
+			int x, y, z;
+
+			std::tie(x, y, z) = nuc->boundary.at(j);
+
+			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+			if (z == i) {
+				BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+				bgr.red = 255 * 255;
+				bgr.green = 255 * 255;
+				bgr.blue = 255 * 255;
+
+			}
+		}
+
+		cv::imshow("Display window", img);
+
+		key = cv::waitKey(0);
+		if (key == 'a') {
+			do {
+				k = (k + 1) % nucleii.size();
+			} while (!nucleii.at(k)->validSize());
+		}
+		else if (key == 'd') {
+			do {
+				k = (nucleii.size() + k - 1) % nucleii.size();
+			} while (!nucleii.at(k)->validSize());
+		}
+
+	} while (key != 27);
+
+
+	// save 2D maxprojects
+	// 2d maxproject
+	for(int k=0; k < nucleii.size(); k++) {
+		int nx, ny, nz;
+		Nucleus* nuc = nucleii.at(k);
+		if (!nuc->validSize()) continue;
+		std::tie(nx, ny, nz) = nuc->local_max;
+		i = nz;
+		cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
+
+		// we are going to look at range from maxima-150 to maxima+150
+		for (int rx = -200; rx <= 200; rx++) {
+			if (nx + rx < 0 || nx + rx > 2047) {
+				continue;
+			}
+			for (int ry = -200; ry <= 200; ry++) {
+				if (ny + ry < 0 || ny + ry > 2047) {
+					continue;
+				}
+				BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
+
+				for (int zh = i - 50; zh < i + 50; zh++) {
+					if (zh < 0) continue;
+					if (zh > 200) break;
+					uint16_t green = median594[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * zh];
+					if (bgr.green < 255 * 255 && bgr.green < (green - green_pixel_lower) * (255 * 255 / green_pixel_upper)) {
+						if (green > green_pixel_upper) bgr.green = 255 * 255;
+						else bgr.green = (green - green_pixel_lower) * (255 * 255 / green_pixel_upper);
+					}
+					uint16_t blue = stack[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * zh];
+
+					if (bgr.blue < 255 * 255 && bgr.blue < (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper)) {
+						if (blue > blue_pixel_upper) bgr.blue = 255 * 255;
+						else bgr.blue = (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper);
+					}
+
+					uint16_t red = median640[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * zh];
+					if (bgr.red < 255 * 255 && bgr.red < (red - red_pixel_lower) * (255 * 255 / red_pixel_upper)) {
+						if (red > red_pixel_upper) bgr.red = 255 * 255;
+						else bgr.red = (red - red_pixel_lower) * (255 * 255 / red_pixel_upper);
+					}
+				}
+			}
+		}
+
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_dots594.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_dots594.at(j)->local_max;
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+
+		}
+
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_dots640.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_dots640.at(j)->local_max;
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+		}
+
+		for (int j = 0; j < nuc->boundary.size(); j++) {
+			int x, y, z;
+
+			std::tie(x, y, z) = nuc->boundary.at(j);
+
+			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+			if (z == i) {
+				BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+				bgr.red = 255 * 255;
+				bgr.green = 255 * 255;
+				bgr.blue = 255 * 255;
+
+			}
+		}
+		//
+		char filename[500];
+		sprintf(filename, "max_projects/nuc%d.png", k);
+		cv::imwrite(filename, img);
+
+	}
 	// make upper and lower limits
 
 	// show up close version of cell, with dots
@@ -1586,9 +1898,9 @@ int main()
 
 	std::vector<std::tuple<int, int, int>> maxima_notfound;
 	int found = 0;
-	for (int i = 0; i < blobs.size(); i++) {
+	for (int i = 0; i < nucleii.size(); i++) {
 		int max_x, max_y, max_z;
-		std::tie(max_x, max_y, max_z) = blobs.at(i)->local_max;
+		std::tie(max_x, max_y, max_z) = nucleii.at(i)->local_max;
 		int imatch = -1;
 		for (int j = 0; j < groundtruth_405_maxima.size(); j++) {
 			int true_x, true_y, true_z; 
@@ -1621,9 +1933,9 @@ int main()
 		int max_x, max_y, max_z;
 		std::tie(max_x, max_y, max_z) = groundtruth_405_maxima.at(i);
 		int imatch = -1;
-		for (int j = 0; j < blobs.size(); j++) {
+		for (int j = 0; j < nucleii.size(); j++) {
 			int true_x, true_y, true_z;
-			std::tie(true_x, true_y, true_z) = blobs.at(j)->local_max;
+			std::tie(true_x, true_y, true_z) = nucleii.at(j)->local_max;
 			if ((max_x - true_x) * (max_x - true_x) + (max_y - true_y) * (max_y - true_y) + (max_z - true_z) * (max_z - true_z) < 50 * 50) {
 				imatch = j;
 			}
@@ -1661,64 +1973,6 @@ int main()
 	}
 	fclose(maxima_csv);
 
-
-	// make the dots csv
-	// obviously we need x,y,z,channel, 
-	// also closest nuclei id, and x,y,z
-	FILE* dots_csv = fopen("dots.csv", "w");
-	fprintf(dots_csv, "id,x,y,z,cn_id,cn_x,cn_y,cn_z,channel\n");
-	for (int i = 0; i < maxima594.size(); i++) {
-		int x, y, z;
-		std::tie(x, y, z) = maxima594.at(i);
-
-		int cn_x, cn_y, cn_z, cn_id = 0;
-		std::tie(cn_x, cn_y, cn_z) = maxima.at(0);
-
-		float closest = (x - cn_x) * (x - cn_x) + (y - cn_y) * (y - cn_y) + (z - cn_z) * (z - cn_z);
-		for (int j = 1; j < blobs.size(); j++) {
-			if (blobs.at(j)->points.size() < 100000 || blobs.at(j)->points.size() > 1000000) continue;
-
-			int n_x, n_y, n_z;
-			std::tie(n_x, n_y, n_z) = blobs.at(j)->local_max;
-			float this_dist = (x - n_x) * (x - n_x) + (y - n_y) * (y - n_y) + (z - n_z) * (z - n_z);
-			if (this_dist < closest) {
-				closest = this_dist;
-				cn_x = n_x;
-				cn_y = n_y;
-				cn_z = n_z;
-				cn_id = j;
-			}
-		}
-		if (closest < 125 * 125) {
-			fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,594\n", i, x, y, z, cn_id, cn_x, cn_y, cn_z);
-		}
-	}
-
-	for (int i = 0; i < maxima647.size(); i++) {
-		int x, y, z;
-		std::tie(x, y, z) = maxima647.at(i);
-
-		int cn_x, cn_y, cn_z, cn_id = maxima594.size();
-		std::tie(cn_x, cn_y, cn_z) = maxima.at(0);
-
-		float closest = (x - cn_x) * (x - cn_x) + (y - cn_y) * (y - cn_y) + (z - cn_z) * (z - cn_z);
-		for (int j = 1; j < blobs.size(); j++) {
-			if (blobs.at(j)->points.size() < 100000 || blobs.at(j)->points.size() > 1000000) continue;
-			int n_x, n_y, n_z;
-			std::tie(n_x, n_y, n_z) = blobs.at(j)->local_max;
-			float this_dist = (x - n_x) * (x - n_x) + (y - n_y) * (y - n_y) + (z - n_z) * (z - n_z);
-			if (this_dist < closest) {
-				closest = this_dist;
-				cn_x = n_x;
-				cn_y = n_y;
-				cn_z = n_z;
-				cn_id = j;
-			}
-		}
-		fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,640\n", i + maxima594.size(), x, y, z, cn_id, cn_x, cn_y, cn_z);
-	}
-	fclose(dots_csv);
-	std::cout << "Wrote dots.csv" << std::endl;
 	std::cout << "Calculating image shifts...";
 
 	// calculating phase shifts between 488, 594, and 640
