@@ -1342,7 +1342,7 @@ int main()
 		blob->boundary.reserve(200);
 		blob->local_max = maxima647.at(j);
 		segment_blob(blob->points, blob->boundary, maxima647.at(j), gradientField);
-		dots594.push_back(blob);
+		dots647.push_back(blob);
 		std::cout << "blob has " << blob->points.size() << " voxels" << std::endl;
 		std::cout << "boundary has " << blob->boundary.size() << " voxels" << std::endl;
 	}
@@ -1844,7 +1844,6 @@ int main()
 			std::tie(dx, dy, dz) = nuc->close_dots594.at(j)->local_max;
 			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
 			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
-
 		}
 
 		// for all the dots, show their outline
