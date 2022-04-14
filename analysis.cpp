@@ -95,8 +95,8 @@ public:
 	}
 };
 class Dot : public Blob {
-	const int size_upper_limit = 2000;
-	const int size_lower_limit = 200;
+	const int size_upper_limit = 5000;
+	const int size_lower_limit = 1;
 public:
 	int id; 
 	
@@ -1338,7 +1338,9 @@ int main()
 		"MouseBrain2021-10-21\\10x\\10x_",
 		"MouseBrain2021-10-21\\endogenous_0x\\endogenous_0x_"
 	};
-
+	//FILE* dots_csv;
+	//FILE* nucleii_csv;
+	//
 	FILE* dots_csv = fopen("dots.csv", "w");
 	fprintf(dots_csv, "id,x,y,z,cn_id,cn_x,cn_y,cn_z,channel,dir,pos\n");
 	fclose(dots_csv);
@@ -1354,7 +1356,7 @@ int main()
 		sprintf(dapi_filename, "%s#%d_New.tif", dir, pos);
 
 		FILE* dapi_file;
-		while (dapi_file = fopen(dapi_filename, "r")) {
+		while ((dapi_file = fopen(dapi_filename, "r")) && pos < 10) {
 			fclose(dapi_file);
 			std::cout << "Working on " << dapi_filename << std::endl;
 
@@ -1521,11 +1523,11 @@ int main()
 			for (int z = 0; z < 201; z++) {
 				for (int y = 0; y < 2048; y++) {
 					for (int x = 0; x < 2048; x++) {
-						if ((*pointer) <= 160) {
+						if ((*pointer) <= 135) {
 							*pointer = 0;
 						}
 						else {
-							*pointer = (*pointer) - 160;
+							*pointer = (*pointer) - 135;
 						}
 						pointer++;
 					}
@@ -1561,6 +1563,7 @@ int main()
 				dots594.at(j) = blob;
 				}, partitioner);
 			std::cout << "done." << std::endl;
+			std::cout << "Segmented " << dots594.size() << " dots." << std::endl;
 
 			//std::cout << "please observe this dog..." << std::endl;
 			std::cout << "Loading 640...";
@@ -1575,15 +1578,16 @@ int main()
 			std::cout << "done." << std::endl;
 			delete[] stack647;
 
+			// analyzing pos2 on 0x seems to indicate that 220 is the correct number here.
 			pointer = median640;
 			for (int z = 0; z < 201; z++) {
 				for (int y = 0; y < 2048; y++) {
 					for (int x = 0; x < 2048; x++) {
-						if ((*pointer) <= 160) {
+						if ((*pointer) <= 500) {
 							*pointer = 0;
 						}
 						else {
-							*pointer = (*pointer) - 160;
+							*pointer = (*pointer) - 500;
 						}
 						pointer++;
 					}
@@ -1773,8 +1777,9 @@ int main()
 					//blink = !blink;
 				}
 
-			} while (key != 27);
+			} while (key != 27);*/
 
+			/*
 			i = 0;
 			k = 0;
 			do {
@@ -1847,10 +1852,11 @@ int main()
 					//blink = !blink;
 				}
 
-			} while (key != 27);
-			*/
+			} while (key != 27);*/
+			
 
 			// on this screen we want to display a single cell with its dots
+			
 			const int blue_pixel_lower = 120;
 			const int blue_pixel_upper = 200;
 
@@ -1898,7 +1904,7 @@ int main()
 						else bgr.red = (red - red_pixel_lower) * (255 * 255 / red_pixel_upper);
 
 
-						uint16_t white = stack488[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * i];
+						/*uint16_t white = stack488[(nx + rx) + (ny + ry) * 2048 + 2048 * 2048 * i];
 						if (white <= white_pixel_lower) {
 							//bgr.red = 
 						}
@@ -1911,19 +1917,19 @@ int main()
 							bgr.red = (white - white_pixel_lower) * (255 * 255 / white_pixel_upper);
 							bgr.green = bgr.red;
 							bgr.blue = bgr.red;
-						}
-					}
-				}
-				cv::Mat channels[3];
-				cv::split(img, channels);
+						} */
+					//}
+				//}
+				//cv::Mat channels[3];
+				//cv::split(img, channels);
 
-				cv::Mat greenMat, redMat;
-				channels[1].convertTo(greenMat, CV_32F);
-				channels[2].convertTo(redMat, CV_32F);
+				//cv::Mat greenMat, redMat;
+				//channels[1].convertTo(greenMat, CV_32F);
+				//channels[2].convertTo(redMat, CV_32F);
 
-				cv::Point2d point = cv::phaseCorrelate(greenMat, redMat);
-				std::cout << "phase correlate: (" << point.x << ", " << point.y << ")" << std::endl;
-
+				//cv::Point2d point = cv::phaseCorrelate(greenMat, redMat);
+				//std::cout << "phase correlate: (" << point.x << ", " << point.y << ")" << std::endl;
+				/*
 				for (int j = 0; j < nuc->boundary.size(); j++) {
 					int x, y, z;
 
@@ -1988,10 +1994,10 @@ int main()
 				else {
 					//blink = !blink;
 				}
-			} while (key != 27);
+			} while (key != 27);*/
 
 			// 2d maxproject
-			k = 0;
+			/*k = 0;
 			do {
 				int nx, ny, nz;
 				Nucleus* nuc = nucleii.at(k);
