@@ -1485,8 +1485,15 @@ int main()
 			uint16_t* stack488 = new uint16_t[2048 * 2048 * 201];
 			load_tiff2(file_488, stack488);
 			std::cout << "done." << std::endl;
-			/*
-			pointer = stack488;
+
+			std::cout << "median 488...";
+			uint16_t* median488 = new uint16_t[2048 * 2048 * 201];
+			medianFilter3x3(stack488, median488);
+			std::cout << "done." << std::endl;
+			delete[] stack488;
+
+			
+			pointer = median488;
 			for (int z = 0; z < 201; z++) {
 				for (int y = 0; y < 2048; y++) {
 					for (int x = 0; x < 2048; x++) {
@@ -1494,17 +1501,38 @@ int main()
 							*pointer = 0;
 						}
 						else {
-							*pointer = (*pointer) - 160;
+							*pointer = (*pointer) - 160; // this should be 160 to accurately determine GFP signal over noise in nucleii.
 						}
 						pointer++;
 					}
 				}
-			}*/
+			} // zero it out
+
+			// compute gaussian
+			std::cout << "computing 488 gaussian...";
+			float* gaussian_488 = new float[2048 * 2048 * 201];
+			gaussian_filter3D_parallel(median488, 2, 1, gaussian_488);
+			std::cout << "done." << std::endl;
+
+			// find maxima
+			std::vector<std::tuple<int, int, int>> maxima488;
+			findMaxima(gaussian_488, maxima488);
+			std::cout << "Found " << maxima488.size() << " dots." << std::endl;
+
+
+
+			// get gradient field
+			// not doing this for now, not really interested in segmenting by size
+
+
+			delete[] gaussian_488;
+			// segment dots
 
 			//std::cout << "median filter 488...";
 			//uint16_t* median488 = new uint16_t[2048 * 2048 * 201];
 			//medianFilter3x3(stack488, median488);
 			//std::cout << "done." << std::endl;
+
 
 			//std::cout << "please observe this dog..." << std::endl;
 			std::cout << "Loading 594...";
@@ -1523,11 +1551,11 @@ int main()
 			for (int z = 0; z < 201; z++) {
 				for (int y = 0; y < 2048; y++) {
 					for (int x = 0; x < 2048; x++) {
-						if ((*pointer) <= 135) {
+						if ((*pointer) <= 140) {
 							*pointer = 0;
 						}
 						else {
-							*pointer = (*pointer) - 135;
+							*pointer = (*pointer) - 140;
 						}
 						pointer++;
 					}
@@ -1634,7 +1662,7 @@ int main()
 				for (std::tuple<int, int, int> pos : nuc->points) {
 					int xg, yg, zg;
 					std::tie(xg, yg, zg) = pos; 
-					sumgreen += stack488[xg + 2048 * yg + 2048 * 2048 * zg];
+					sumgreen += median488[xg + 2048 * yg + 2048 * 2048 * zg];
 				}
 				fprintf(nucleii_csv, "%d,%d,%d,%d,%d,%s,%d,%s,%d\n", nuc->id, max_x, max_y, max_z, nuc->points.size(), nuc->validSize() ? "TRUE" : "FALSE", sumgreen, dir, pos);
 			}
@@ -1643,7 +1671,17 @@ int main()
 			// make the dots csv
 			// obviously we need x,y,z,channel, 
 			// also closest nuclei id, and x,y,z
+			int id = 0;
 			dots_csv = fopen("dots.csv", "a");
+			for (int i = 0; i < maxima488.size(); i++) {
+				int x, y, z;
+				std::tie(x, y, z) = maxima488.at(i);
+
+				fprintf(dots_csv, "%d,%d,%d,%d,,,,,488,%s,%d\n", id, x, y, z, dir, pos);
+				id++;
+			}
+
+
 			for (int i = 0; i < dots594.size(); i++) {
 				Dot* dot = dots594.at(i);
 				if (!dot->validSize()) continue;
@@ -1672,7 +1710,8 @@ int main()
 				}
 				if (closest < 125 * 125) {
 					nuc->close_dots594.push_back(dot);
-					fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,594,%s,%d\n", i, x, y, z, cn_id, cn_x, cn_y, cn_z, dir, pos);
+					fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,594,%s,%d\n", id, x, y, z, cn_id, cn_x, cn_y, cn_z, dir, pos);
+					id++;
 				}
 			}
 
@@ -1702,7 +1741,8 @@ int main()
 				}
 				if (closest < 125 * 125) {
 					nuc->close_dots640.push_back(dot);
-					fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,640,%s,%d\n", i + maxima594.size(), x, y, z, cn_id, cn_x, cn_y, cn_z, dir, pos);
+					fprintf(dots_csv, "%d,%d,%d,%d,%d,%d,%d,%d,640,%s,%d\n", id, x, y, z, cn_id, cn_x, cn_y, cn_z, dir, pos);
+					id++;
 				}
 			}
 			fclose(dots_csv);
@@ -2091,7 +2131,6 @@ int main()
 
 			// save 2D maxprojects
 			// 2d maxproject 
-
 			std::cout << "writing maxprojects...";
 			for (int k = 0; k < nucleii.size(); k++) {
 				int nx, ny, nz;
@@ -2269,7 +2308,7 @@ int main()
 			delete[] stack;
 			delete[] filtered;
 			delete[] gradientField;
-			delete[] stack488;
+			delete[] median488;
 			delete[] median594;
 			delete[] median640;
 			for (Nucleus* nuc : nucleii) {
