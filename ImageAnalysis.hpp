@@ -1,0 +1,1113 @@
+#pragma once
+
+#define GAUSSIAN_CUTOFF 4
+#define M_PI 3.14159265358979323846
+
+
+struct BGR {
+	uint16_t blue;
+	uint16_t green;
+	uint16_t red;
+};
+
+struct BGR_float {
+	float blue;
+	float green;
+	float red;
+};
+
+struct float3 {
+	float x;
+	float y;
+	float z;
+};
+
+class Blob {
+public:
+	std::vector<std::tuple<int, int, int>> points;
+	std::vector<std::tuple<int, int, int>> boundary;
+	std::tuple<int, int, int> local_max;
+
+	int size() {
+		return points.size();
+	}
+
+	//virtual void to_csv(char buf[]) = 0;
+};
+
+
+class Dot;
+class Nucleus : public Blob {
+	const int size_upper_limit;
+	const int size_lower_limit;
+public:
+	Nucleus(int sul, int sll) : size_upper_limit(sul), size_lower_limit(sll) {
+	}
+
+	int id;
+	std::vector<Dot*> close_dots594;
+	std::vector<Dot*> close_dots640;
+
+	bool validSize() {
+		return points.size() > size_lower_limit && points.size() < size_upper_limit;
+	}
+};
+
+class Dot : public Blob {
+	const int size_upper_limit;
+	const int size_lower_limit;
+public:
+	int id;
+
+	Dot(const int sul, const int sll) : size_upper_limit(sul), size_lower_limit(sll) {
+	}
+
+	bool validSize() {
+		return points.size() > size_lower_limit && points.size() < size_upper_limit;
+	}
+};
+
+
+void loadTiff(uint16_t* output, const char* filename, const int width, const int height, const int depth) {
+		TIFF* tiff = TIFFOpen(filename, "r");
+
+		// turn off warnings
+		TIFFSetWarningHandler(0);
+
+		int zed = 0;
+		do {
+			int ied = 0;
+			for (int i = 0; i < height; i++) {
+				TIFFReadScanline(tiff, (output + ied + zed), i);
+				ied += width;
+			}
+			zed += width * height;
+		} while (TIFFReadDirectory(tiff));
+		TIFFClose(tiff);
+}
+
+
+void findMaxima(float* voxels, const int width, const int height, const int depth, std::vector<std::tuple<int, int, int>>& maxima) {
+	for (int z = 2; z < depth-2; z++) {
+		for (int y = 2; y < height -2; y++) {
+			for (int x = 2; x < width - 2; x++) {
+				float current = voxels[width * y + height* width * z + x];
+				// 6 checks
+				if (current <= voxels[width * y + height* width * z + x + 1])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 1 + width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 - width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 - width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 1 + width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 - width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 - width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + width + width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + width - width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - width + width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - width - width*height])
+					continue;
+
+				// go out to distance of 2 to avoid numerical error
+
+				// x - 2 face
+				if (current <= voxels[width * y + height* width * z + x - 2 - 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 2 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 2 - 1 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 1 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 1 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 1 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 1 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 2 - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 2 + 1 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 1 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 1 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 1 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 1 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 2 + 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 + 2 * width + 2 * width*height])
+					continue;
+
+				// x + 2 face
+				if (current <= voxels[width * y + height* width * z + x + 2 - 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 2 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 2 - 1 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 1 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 1 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 1 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 1 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 2 - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 2 + 1 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 1 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 1 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 1 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 1 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 2 + 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 + 2 * width + 2 * width*height])
+					continue;
+
+
+				// y - 2 face
+				if (current <= voxels[width * y + height* width * z + x - 1 - 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 - 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 - 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 - 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 - 2 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 1 - 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 - 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 - 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 - 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 - 2 * width + 2 * width*height])
+					continue;
+
+
+				// y + 2 face
+				if (current <= voxels[width * y + height* width * z + x - 1 + 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + 2 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 1 + 2 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + 2 * width - 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + 2 * width])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + 2 * width + 1 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + 2 * width + 2 * width*height])
+					continue;
+
+				// z - 2 face
+				if (current <= voxels[width * y + height* width * z + x - 1 - 1 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + 1 * width - 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 1 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 * width - 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 1 - 1 * width - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 - 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + 1 * width - 2 * width*height])
+					continue;
+
+
+				// z + 2 face
+				if (current <= voxels[width * y + height* width * z + x - 1 - 1 * width + 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x - 1 + 1 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x - 1 * width + 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 * width + 2 * width*height])
+					continue;
+
+				if (current <= voxels[width * y + height* width * z + x + 1 - 1 * width + 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + 2 * width*height])
+					continue;
+				if (current <= voxels[width * y + height* width * z + x + 1 + 1 * width + 2 * width*height])
+					continue;
+
+				maxima.push_back(std::make_tuple(x, y, z));
+			}
+		}
+	}
+}
+
+
+void gradientField3d(float* voxels, const int width, const int height, const int depth, float3* gradientField) {
+	float sixth_order_centered[4] = { 0, 3.0 / 4, -3.0 / 20, 1.0 / 60 };
+	float sixth_order_forward[7] = { -49.0 / 20, 6.0, -15.0 / 2, 20.0 / 3, -15.0 / 4, 6.0 / 5, -1.0 / 6 };
+	concurrency::parallel_for(0, depth, [&sixth_order_centered, &sixth_order_forward, gradientField, voxels, width, height, depth](int z) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				float dx = 0, dy = 0, dz = 0;
+
+				if (x < 3) {
+					for (int i = 0; i < 7; i++) {
+						dx += voxels[(x + i) + width * y + width * height * z] * sixth_order_forward[i];
+					}
+				}
+				else if (x > width - 4) {
+					for (int i = 0; i < 7; i++) {
+						dx += -voxels[(x - i) + width * y + width * height * z] * sixth_order_forward[i];
+					}
+				}
+				else {
+					for (int i = 1; i < 4; i++) {
+						dx += voxels[(x + i) + width * y + width * height * z] * sixth_order_centered[i];
+						dx += -voxels[(x - i) + width * y + width * height * z] * sixth_order_centered[i];
+					}
+				}
+				gradientField[x + width * y + width * height * z].x = dx;
+
+				if (y < 3) {
+					for (int j = 0; j < 7; j++) {
+						dy += voxels[x + width * (y + j) + width * height * z] * sixth_order_forward[j];
+					}
+				}
+				else if (y > height - 4) {
+					for (int j = 0; j < 7; j++) {
+						dy += -voxels[x + width * (y - j) + width * height * z] * sixth_order_forward[j];
+					}
+				}
+				else {
+					for (int j = 1; j < 4; j++) {
+						dy += voxels[x + width * (y + j) + width * height * z] * sixth_order_centered[j];
+						dy += -voxels[x + width * (y - j) + width * height * z] * sixth_order_centered[j];
+					}
+				}
+				gradientField[x + width * y + width * height * z].y = dy;
+
+				if (z < 3) {
+					for (int k = 0; k < 7; k++) {
+						dz += voxels[x + width * y + width * height * (z + k)] * sixth_order_forward[k];
+					}
+				}
+				else if (z > depth - 4) {
+					for (int k = 0; k < 7; k++) {
+						dz += -voxels[x + width * y + width * height * (z - k)] * sixth_order_forward[k];
+					}
+				}
+				else {
+					for (int k = 1; k < 4; k++) {
+						dz += voxels[x + width * y + width * height * (z + k)] * sixth_order_centered[k];
+						dz += -voxels[x + width * y + width * height * (z - k)] * sixth_order_centered[k];
+
+					}
+				}
+				gradientField[x + width * y + width * height * z].z = dz;
+			}
+		}
+		});
+}
+
+
+void eigenvalues(std::array<std::array<float, 3>, 3> hessian, float& eig1, float& eig2, float& eig3) {
+	/*
+*
+*
+	Extra Fast algorithm for computing eigenvalues of 3x3 symmetric matrices
+	https://en.wikipedia.org/wiki/Eigenvalue_algorithm#3.C3.973_matrices
+*/
+	float q = (hessian[0][0] + hessian[1][1] + hessian[2][2]) / 3;
+	float p2 = (hessian[0][0] - q) * (hessian[0][0] - q) +
+		(hessian[1][1] - q) * (hessian[1][1] - q) +
+		(hessian[2][2] - q) * (hessian[2][2] - q) +
+		2 * (hessian[1][0] * hessian[1][0] + hessian[2][0] * hessian[2][0] + hessian[2][1] * hessian[2][1]);
+	float p = sqrt(p2 / 6);
+
+	// B = 1/p (A - qI)
+	hessian[0][0] -= q;
+	hessian[1][1] -= q;
+	hessian[2][2] -= q;
+
+	hessian[0][0] = hessian[0][0] / p;
+	hessian[1][1] = hessian[1][1] / p;
+	hessian[2][2] = hessian[2][2] / p;
+	hessian[1][0] = hessian[1][0] / p;
+	hessian[2][0] = hessian[2][0] / p;
+	hessian[2][1] = hessian[2][1] / p;
+
+
+	float det = hessian[0][0] * (hessian[1][1] * hessian[2][2] - hessian[2][1] * hessian[2][1])
+		- hessian[1][0] * (hessian[1][0] * hessian[2][2] - hessian[2][1] * hessian[2][0])
+		+ hessian[2][0] * (hessian[1][0] * hessian[2][1] - hessian[1][1] * hessian[2][0]);
+
+
+	float r2 = det / 2;
+	float phi;
+	if (r2 <= -1) {
+		phi = 3.1415926535 / 3;
+	}
+	else if (r2 >= 1.0) {
+		phi = 0;
+	}
+	else {
+		phi = acos(r2) / 3;
+	}
+	eig1 = q + 2 * p * cos(phi);
+	eig2 = q + 2 * p * cos(phi + (2 * 3.1415926535 / 3));
+	eig3 = 3 * q - eig1 - eig2;
+}
+
+// this is not the correct way to compute the eigenvector, but it'll have to do for now.
+// why not just swap this out for more professional algos like LAPACK?
+void eigenvector(std::array<std::array<float, 3>, 3> hessian, float eig, float3& ev) {
+	hessian[0][0] = hessian[0][0] - eig;
+	hessian[1][1] = hessian[1][1] - eig;
+	hessian[2][2] = hessian[2][2] - eig;
+
+	std::array<float, 3> tmp{};
+
+	for (int i = 0; i < 3; i++) {
+		// change the pivot if the current point is zero
+		if (hessian[i][i] == 0) {
+			for (int j = i + 1; j < 3; j++) {
+				// swap pivot row into ith row
+				if (hessian[j][i] != 0) {
+					for (int k = 0; k < 3; k++) {
+						tmp[k] = hessian[i][k];
+						hessian[i][k] = hessian[j][k]; // normalize to 1
+						hessian[j][k] = tmp[k];
+					}
+					break;
+				}
+			}  // if we get to the end of this, it's just a column of zeros.
+		}
+		if (hessian[i][i] != 0) {
+			for (int j = 0; j < 3; j++) {
+				float ratio = hessian[j][i] / hessian[i][i];
+				if (j == i) continue;
+				for (int k = 0; k < 3; k++) {
+					hessian[j][k] -= ratio * hessian[i][k];
+				} // zeroing out the jth column
+			}
+		}
+
+
+	} // now we should be in some kind of rref
+
+
+	for (int i = 0; i < 3; i++) {
+		if (hessian[i][i] == 0) {
+			tmp[i] = 1;
+		}
+		else {
+			for (int j = 0; j < 3; j++) {
+				if (j != i) tmp[i] -= hessian[i][j] / hessian[i][i];
+			}
+		}
+	}
+
+	float ev_mag = sqrt(tmp[0] * tmp[0] + tmp[1] * tmp[1] + tmp[2] * tmp[2]);
+
+	ev.x = tmp[0] / ev_mag;
+	ev.y = tmp[1] / ev_mag;
+	ev.z = tmp[2] / ev_mag;
+}
+
+
+// medium fast gaussian filter
+// In this function, for optimization purposes I try to use some pointer
+// arithmetic so that I'm always reading from continuous memory.
+void gaussian_filter3D_parallel(uint16_t* input, const int width, const int height, const int depth, int sigmaxy, int sigmaz, float* result) {
+	float float_sigmaxy = (float)sigmaxy;
+	float float_sigmaz = (float)sigmaz;
+	// prerun expensive exp operation in 1d array
+	float* kernelxy = new float[2 * GAUSSIAN_CUTOFF * sigmaxy];
+	float* kernelz = new float[2 * GAUSSIAN_CUTOFF * sigmaz];
+	float normxy = 1.0 / sqrt(2 * M_PI * float_sigmaxy * float_sigmaxy);
+	float normz = 1.0 / sqrt(2 * M_PI * float_sigmaz * float_sigmaz);
+
+	for (int r = 0; r <= 2 * GAUSSIAN_CUTOFF * sigmaxy; r++) {
+		kernelxy[r] = exp(-r * r / (2 * float_sigmaxy * float_sigmaxy)) * normxy;
+	}
+	for (int r = 0; r <= 2 * GAUSSIAN_CUTOFF * sigmaz; r++) {
+		kernelz[r] = exp(-r * r / (2 * float_sigmaz * float_sigmaz)) * normz;
+	}
+
+	float* temp = new float[width * height * depth];
+
+	concurrency::static_partitioner partitioner;
+	//concurrency::critical_section cs;
+
+	uint16_t* yaxis = new uint16_t[height];
+	float* zaxis = new float[depth];
+	float* xaxis = new float[width]; 
+
+	concurrency::parallel_for(0, width, [&input, &result, &sigmaxy, &kernelxy, &temp, &yaxis, depth, width, height](int x) {
+		for (int z = 0; z < depth; z++) {
+			// copy to contiguous memory for better speed.
+			//const  int h = height;
+
+			for (int y = 0; y < height; y++) {
+				yaxis[y] = input[x + width * height * z + y * width];
+			}
+
+			for (int y = 0; y < height; y++) {
+				float sum = 0;
+				int j_min, j_max;
+				if (y - GAUSSIAN_CUTOFF * sigmaxy > 0) {
+					j_min = y - GAUSSIAN_CUTOFF * sigmaxy;
+				}
+				else {
+					j_min = 0;
+				}
+				if (y + GAUSSIAN_CUTOFF * sigmaxy < height) {
+					j_max = y + GAUSSIAN_CUTOFF * sigmaxy;
+				}
+				else {
+					j_max = height;
+				}
+
+				for (int j = j_min; j < y; j++) {
+					sum += yaxis[j] * kernelxy[y - j];
+				}
+				for (int j = y; j < j_max; j++) {
+					sum += yaxis[j] * kernelxy[j - y];
+				}
+				result[z * height + height * depth * x + y] = sum;
+			}
+		}
+		}, partitioner);
+	//}
+
+	concurrency::parallel_for(0, height, [&result, &temp, &sigmaz, &kernelz, &zaxis, width, height, depth](int y) {
+		for (int x = 0; x < width; x++) {
+			// copy to contiguous memory
+			for (int z = 0; z < depth;z++) {
+				zaxis[z] = result[y + height * depth * x + z * height];
+			}
+			for (int z = 0; z < depth; z++) {
+				int j_min, j_max;
+				float sum = 0;
+				if (z - GAUSSIAN_CUTOFF * sigmaz > 0) {
+					j_min = z - GAUSSIAN_CUTOFF * sigmaz;
+				}
+				else {
+					j_min = 0;
+				}
+				if (z + GAUSSIAN_CUTOFF * sigmaz < depth) {
+					j_max = z + GAUSSIAN_CUTOFF * sigmaz;
+				}
+				else {
+					j_max = depth;
+				}
+
+				for (int j = j_min; j < z; j++) {
+					sum += zaxis[j] * kernelz[z - j];
+				}
+				for (int j = z; j < j_max; j++) {
+					sum += zaxis[j] * kernelz[j - z];
+				}
+				temp[depth * x + width * depth * y + z] = sum;
+			}
+		}
+		}, partitioner);
+	//}
+
+	concurrency::parallel_for(0, depth, [&temp, &result, &sigmaxy, &kernelxy, &xaxis, width, height, depth](int z) {
+		for (int y = 0; y < height; y++) {
+			int j_min, j_max;
+			for (int x = 0; x < width; x++) {
+				xaxis[x] = temp[z + width * depth * y + x * depth];
+			}
+			for (int x = 0; x < width; x++) {
+				float sum = 0;
+				if (x - GAUSSIAN_CUTOFF * sigmaxy > 0) {
+					j_min = x - GAUSSIAN_CUTOFF * sigmaxy;
+				}
+				else {
+					j_min = 0;
+				}
+				if (x + GAUSSIAN_CUTOFF * sigmaxy < width) {
+					j_max = x + GAUSSIAN_CUTOFF * sigmaxy;
+				}
+				else {
+					j_max = width;
+				}
+				for (int j = j_min; j < x; j++) {
+					sum += xaxis[j] * kernelxy[x - j];
+				}
+				for (int j = x; j < j_max; j++) {
+					sum += xaxis[j] * kernelxy[j - x];
+				}
+				//cs.lock();
+				result[width * y + width * height * z + x] = sum;
+				//cs.unlock();
+			}
+		}
+		}, partitioner);
+
+	// clean up
+	// delete 
+	delete[] zaxis;
+	delete[] yaxis;
+	delete[] temp;
+	delete[] kernelxy;
+	delete[] kernelz;
+}
+
+
+
+void medianFilter3x3(uint16_t* voxels, const int width, const int height, const int depth, uint16_t* filtered) {
+	concurrency::parallel_for(0, depth, [&voxels, &filtered, width, height, depth](int z) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 1; x < width; x++) {
+				if (z == 0 || z == depth - 1 || y == 0 || y == height - 1 || x == 0 || x == width - 1) {
+					filtered[x + width * y + width * height * z] = 0;
+					continue;
+				}
+				uint16_t A[27], B[27];
+				uint16_t* current;
+				uint16_t* next;
+				current = A;
+				next = B;
+				for (int i = -1; i < 2; i++) {
+					for (int j = -1; j < 2; j++) {
+						for (int k = -1; k < 2; k++) {
+							current[(i + 1) + 3 * (j + 1) + 3 * 3 * (k + 1)] = voxels[(x + k) + width * (y + j) + width * height * (z + i)];
+						}
+					}
+				}
+				// find nth member of the list
+				int start_index = 0;
+				int len = 27;
+				int n = 14;
+				while (len > 0) {
+					int num_lesser = 0, num_greater = 0;
+					uint16_t pivot = current[start_index];
+					for (int i = 1; i < len; i++) {
+						if (current[start_index + i] > pivot) {
+							next[start_index + len - 1 - num_greater] = current[start_index + i];
+							num_greater++;
+						}
+						else {
+							next[start_index + num_lesser] = current[start_index + i];
+							num_lesser++;
+						}
+					}
+					if (num_lesser == n - 1) { // we've found the nth member
+						filtered[x + width * y + width * height * z] = pivot;
+						len = 0;
+					}
+					else if (num_lesser > n - 1) { // n-1 is in the lesser list
+						next[start_index + len - 1 - num_greater] = pivot;
+						num_greater++;
+						len = len - num_greater;
+					}
+					else { // n-1 is in the greater list
+						next[start_index + num_lesser] = pivot;
+						num_lesser++;
+						start_index += num_lesser;
+						len = len - num_lesser;
+						n = n - num_lesser;
+					}
+					uint16_t* temp = current;
+					current = next;
+					next = temp;
+				}
+			}
+		}
+		});
+
+}
+
+
+// does not compute laplacian on the boundary.
+// can be implemented later with a one-sided stencil. 
+// but I could not find the terms using a quick google search. 
+void laplacianFilter3D(float* voxels, const int width, const int height, const int depth, float* laplacian) {
+	// z x y laplacian
+	float sixth_order_centered[4] = { -49.0 / 18, 3.0 / 2, -3.0 / 20, 1.0 / 90 };
+	float sixth_order_forward[8] = { 469.0 / 90, -223.0 / 10, 879.0 / 20, -949.0 / 18, 41.0, -201.0 / 10, 1019.0 / 180, -7.0 / 10 };
+
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				float lp = 0;
+				// x
+				if (x < 3) {
+					for (int i = 0; i < 8; i++) {
+						lp += voxels[(x + i) + width * y + width * height * z] * sixth_order_forward[i];
+					}
+				}
+				else if (x > width - 4) {
+					for (int i = 0; i < 8; i++) {
+						lp += voxels[(x - i) + width * y + width * height * z] * sixth_order_forward[i];
+					}
+				}
+				else {
+					lp += voxels[x + width * y + width * height * z] * sixth_order_centered[0];
+					for (int i = 1; i < 4; i++) {
+						lp += voxels[(x + i) + width * y + width * height * z] * sixth_order_centered[i];
+						lp += voxels[(x - i) + width * y + width * height * z] * sixth_order_centered[i];
+					}
+				}
+
+				// y
+				if (y < 3) {
+					for (int j = 0; j < 8; j++) {
+						lp += voxels[x + width * (y + j) + width * height * z] * sixth_order_forward[j];
+					}
+				}
+				else if (y > height - 4) {
+					for (int j = 0; j < 8; j++) {
+						lp += voxels[x + width * (y - j) + width * height * z] * sixth_order_forward[j];
+					}
+				}
+				else {
+					lp += voxels[x + width * y + width * height * z] * sixth_order_centered[0];
+					for (int j = 1; j < 4; j++) {
+						lp += voxels[x + width * (y + j) + width * height * z] * sixth_order_centered[j];
+						lp += voxels[x + width * (y - j) + width * height * z] * sixth_order_centered[j];
+
+					}
+				}
+
+				// z 
+				if (z < 3) {
+					for (int k = 0; k < 8; k++) {
+						lp += voxels[x + width * y + width * height * (z + k)] * sixth_order_forward[k];
+
+					}
+				}
+				else if (z > depth - 4) {
+					for (int k = 0; k < 8; k++) {
+						lp += voxels[x + width * y + width * height * (z - k)] * sixth_order_forward[k];
+
+					}
+				}
+				else {
+					lp += voxels[x + width * y + width * height * z] * sixth_order_centered[0];
+					for (int k = 1; k < 4; k++) {
+						lp += voxels[x + width * y + width * height * (z + k)] * sixth_order_centered[k];
+						lp += voxels[x + width * y + width * height * (z - k)] * sixth_order_centered[k];
+					}
+				}
+				laplacian[x + width * y + width * height * z] = lp;
+			}
+		}
+	}
+}
+
+void hessianAt(float3* gradientField, const int width, const int height, const int depth,  int x2, int y2, int z2, std::array<std::array<float, 3>, 3>& hessian) {
+	float sixth_order_centered[4] = { 0, 3.0 / 4, -3.0 / 20, 1.0 / 60 };
+	float sixth_order_forward[7] = { -49.0 / 20, 6.0, -15.0 / 2, 20.0 / 3, -15.0 / 4, 6.0 / 5, -1.0 / 6 };
+
+	if (x2 < 3) {
+		for (int j = 0; j < 7; j++) {
+			float3 gradf = gradientField[(x2 + j) + width * y2 + width * height * z2];
+			hessian[0][0] += gradf.x * sixth_order_forward[j];// d2fdx2
+			hessian[1][0] += gradf.y * sixth_order_forward[j]; // d2fdxdy
+			hessian[2][0] += gradf.z * sixth_order_forward[j]; // d2fdxdz
+		}
+	}
+	else if (x2 > width - 4) {
+		for (int j = 0; j < 7; j++) {
+			float3 gradf = gradientField[(x2 - j) + width * y2 + width * height * z2];
+			hessian[0][0] -= gradf.x * sixth_order_forward[j];// d2fdx2
+			hessian[1][0] -= gradf.y * sixth_order_forward[j]; // d2fdxdy
+			hessian[2][0] -= gradf.z * sixth_order_forward[j]; // d2fdxdz
+		}
+	}
+	else {
+		for (int j = 1; j < 4; j++) {
+			float3 gradf = gradientField[(x2 - j) + width * y2 + width * height * z2];
+			hessian[0][0] -= gradf.x * sixth_order_centered[j];// d2fdx2
+			hessian[1][0] -= gradf.y * sixth_order_centered[j]; // d2fdxdy
+			hessian[2][0] -= gradf.z * sixth_order_centered[j]; // d2fdxdz
+
+
+			gradf = gradientField[(x2 + j) + width * y2 + width * height * z2];
+			hessian[0][0] += gradf.x * sixth_order_centered[j];// d2fdx2
+			hessian[1][0] += gradf.y * sixth_order_centered[j]; // d2fdxdy
+			hessian[2][0] += gradf.z * sixth_order_centered[j]; // d2fdxdz
+		}
+	}
+
+
+	if (y2 < 3) {
+		for (int k = 0; k < 7; k++) {
+			float3 gradf = gradientField[x2 + width * (y2 + k) + width * height * z2];
+			hessian[1][1] += gradf.y * sixth_order_forward[k];// d2fdy2
+			hessian[2][1] += gradf.z * sixth_order_forward[k];// d2fdydz
+		}
+	}
+	else if (y2 > height - 4) {
+		for (int k = 0; k < 7; k++) {
+			float3 gradf = gradientField[x2 + width * (y2 - k) + width * height * z2];
+			hessian[1][1] -= gradf.y * sixth_order_forward[k];// d2fdy2
+			hessian[2][1] -= gradf.z * sixth_order_forward[k];// d2fdy2
+		}
+	}
+	else {
+		for (int k = 1; k < 4; k++) {
+			float3 gradf = gradientField[x2 + width * (y2 + k) + width * height * z2];
+			hessian[1][1] += gradf.y * sixth_order_centered[k];// d2fdy2
+			hessian[2][1] += gradf.z * sixth_order_centered[k];// d2fdy2
+
+
+			gradf = gradientField[x2 + width * (y2 - k) + width * height * z2];
+			hessian[1][1] -= gradf.y * sixth_order_centered[k];// d2fdy2
+			hessian[2][1] -= gradf.z * sixth_order_centered[k];// d2fdy2
+		}
+	}
+
+
+	if (z2 < 3) {
+
+		for (int l = 0; l < 7; l++) {
+			float3 gradf = gradientField[x2 + width * y2 + width * height * (z2 + l)];
+			hessian[2][2] += gradf.z * sixth_order_forward[l];// d2fdz2
+
+		}
+	}
+	else if (z2 > depth - 4) {
+		for (int l = 0; l < 7; l++) {
+			float3 gradf = gradientField[x2 + width * y2 + width * height * (z2 - l)];
+			hessian[2][2] -= gradf.z * sixth_order_forward[l];// d2fdz2
+		}
+	}
+	else {
+
+		for (int l = 1; l < 4; l++) {
+			float3 gradf = gradientField[x2 + width * y2 + width * height * (z2 + l)];
+			hessian[2][2] += gradf.z * sixth_order_centered[l];// d2fdz2
+
+			gradf = gradientField[x2 + width * y2 + width * height * (z2 - l)];
+			hessian[2][2] -= gradf.z * sixth_order_centered[l];// d2fdz2
+
+		}
+	}
+	hessian[0][1] = hessian[1][0];
+	hessian[0][2] = hessian[2][0];
+	hessian[1][2] = hessian[2][1];
+}
+
+
+
+void segment_blob(
+	std::vector<std::tuple<int, int, int>>& points,
+	std::vector<std::tuple<int, int, int>>& boundary,
+	std::tuple<int, int, int>& local_max,
+	float3* gradientField,
+	const int width,
+	const int height,
+	const int depth) {
+	int back = 0;
+	if (!points.size() == 0) {
+		std::cout << "starting points size is not 0. Returning out of segment_nucleus" << std::endl;
+		return;
+	}
+	char* visited = new char[width * height * depth];
+	memset(visited, 0, sizeof(char) * width * height * depth);
+	int x_orig, y_orig, z_orig;
+	std::tie(x_orig, y_orig, z_orig) = local_max;
+	//std::cout << "Computing blob at maximum: (" << x_orig << ", " << y_orig << ", " << z_orig << ")" << std::endl; 
+	//if (max_laplacian > 0) { 
+		//std::cout << "MAX LAPLACIAN POSITIVE: " << max_laplacian << std::endl;
+	//}
+	//else {
+		//std::cout << "Max Laplacian negative: " << max_laplacian << std::endl;
+	//}
+	// breadth first search from the local max
+	// radial derivative  d^2 f / dr^2 
+	points.push_back(std::make_tuple(x_orig, y_orig, z_orig));
+
+	while (points.size() > back) {
+		int x, y, z;
+
+		std::tie(x, y, z) = points.at(back);
+		back++;
+
+		std::array<std::tuple<int, int, int>, 6> new_points = {
+		std::make_tuple(x + 1, y, z),
+		std::make_tuple(x - 1, y, z),
+		std::make_tuple(x, y + 1, z),
+		std::make_tuple(x, y - 1, z),
+		std::make_tuple(x, y, z + 1),
+		std::make_tuple(x, y, z - 1)
+		};
+
+		// compute radial second derivative.		
+		for (int i = 0; i < new_points.size(); i++) {
+			// if in points, continue
+			int x2, y2, z2;
+			std::tie(x2, y2, z2) = new_points.at(i);
+
+			if (x2 - x_orig > 1023 || y2 - y_orig > 1023 || z2 - z_orig > 100 || x2 - x_orig < -1023 || y2 - y_orig < -1023 || z2 - z_orig < -100) {
+				std::cout << "Error in segment_blob: cell too big: " << x2 - x_orig << " " << y2 - y_orig << " " << z2 - z_orig << std::endl;
+				delete[] visited;
+				return;
+			}
+
+			if (visited[(1024 + x2 - x_orig) + (1024 + y2 - y_orig) * width + (100 + z2 - z_orig) * width * height] == 1) {
+				continue;
+			}
+			if (x2 == 0 || y2 == 0 || z2 == 0 || x2 == width - 1  || y2 == height - 1 || z2 == depth - 1 ) {
+				boundary.push_back(std::make_tuple(x2, y2, z2));
+			}
+			else {
+
+				// instead of using laplacian, we look at whether the rate of change of the radial second derivative is positive.
+				// so compute d^2 f / dr^2 at new point, if greater than zero, end.
+				// d^2 f / dr^2 = grad ( grad(f) dot r ) dot r
+
+				float sixth_order_centered[4] = { 0, 3.0 / 4, -3.0 / 20, 1.0 / 60 };
+				float sixth_order_forward[7] = { -49.0 / 20, 6.0, -15.0 / 2, 20.0 / 3, -15.0 / 4, 6.0 / 5, -1.0 / 6 };
+				float gradx = 0, grady = 0, gradz = 0;
+
+				std::array<std::array<float, 3>, 3> hessian = {};
+				hessianAt(gradientField, width, height, depth, x2, y2, z2, hessian);
+
+				float3 r;
+				r.x = x2 - x_orig;
+				r.y = y2 - y_orig;
+				r.z = z2 - z_orig;
+				float r_mag = sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
+				r.x = r.x / r_mag;
+				r.y = r.y / r_mag;
+				r.z = r.z / r_mag;
+
+				float3 theta_hat;
+				theta_hat.x = -r.y / sqrt(1 - r.z * r.z);
+				theta_hat.y = r.x / sqrt(1 - r.z * r.z);
+				theta_hat.z = 0;
+				float3 phi_hat;
+				phi_hat.x = theta_hat.y * r.z;
+				phi_hat.y = -theta_hat.x * r.z;
+				phi_hat.z = -sqrt(1 - r.z * r.z);
+
+
+				float3 next_gradient = gradientField[x2 + height * y2 + height * width * z2];
+				float next_grad_mag = sqrt(next_gradient.x * next_gradient.x + next_gradient.y * next_gradient.y + next_gradient.z * next_gradient.z);
+				float3 grad_dir;
+				grad_dir.x = next_gradient.x / next_grad_mag;
+				grad_dir.y = next_gradient.y / next_grad_mag;
+				grad_dir.z = next_gradient.z / next_grad_mag;
+
+				// what is the second derivative 
+				float d2fdg2 = grad_dir.x * (hessian[0][0] * grad_dir.x + hessian[1][0] * grad_dir.y + hessian[2][0] * grad_dir.z) +
+					grad_dir.y * (hessian[1][0] * grad_dir.x + hessian[1][1] * grad_dir.y + hessian[2][1] * grad_dir.z) +
+					grad_dir.z * (hessian[2][0] * grad_dir.x + hessian[2][1] * grad_dir.y + hessian[2][2] * grad_dir.z);
+
+				// 
+				float d2fdtheta2 = theta_hat.x * (hessian[0][0] * theta_hat.x + hessian[1][0] * theta_hat.y + hessian[2][0] * theta_hat.z) +
+					theta_hat.y * (hessian[1][0] * theta_hat.x + hessian[1][1] * theta_hat.y + hessian[2][1] * theta_hat.z) +
+					theta_hat.z * (hessian[2][0] * theta_hat.x + hessian[2][1] * theta_hat.y + hessian[2][2] * theta_hat.z);
+
+				float d2fdphi2 = phi_hat.x * (hessian[0][0] * phi_hat.x + hessian[1][0] * phi_hat.y + hessian[2][0] * phi_hat.z) +
+					phi_hat.y * (hessian[1][0] * phi_hat.x + hessian[1][1] * phi_hat.y + hessian[2][1] * phi_hat.z) +
+					phi_hat.z * (hessian[2][0] * phi_hat.x + hessian[2][1] * phi_hat.y + hessian[2][2] * phi_hat.z);
+
+				float d2fdr2 = r.x * (hessian[0][0] * r.x + hessian[1][0] * r.y + hessian[2][0] * r.z) +
+					r.y * (hessian[1][0] * r.x + hessian[1][1] * r.y + hessian[2][1] * r.z) +
+					r.z * (hessian[2][0] * r.x + hessian[2][1] * r.y + hessian[2][2] * r.z);
+
+				float hessianphitheta[3][2];
+				hessianphitheta[0][0] = hessian[0][0] * theta_hat.x + hessian[1][0] * theta_hat.y + hessian[2][0] * theta_hat.z;
+				hessianphitheta[1][0] = hessian[1][0] * theta_hat.x + hessian[1][1] * theta_hat.y + hessian[2][1] * theta_hat.z;
+				hessianphitheta[2][0] = hessian[2][0] * theta_hat.x + hessian[2][1] * theta_hat.y + hessian[2][2] * theta_hat.z;
+
+				hessianphitheta[0][1] = hessian[0][0] * phi_hat.x + hessian[1][0] * phi_hat.y + hessian[2][0] * phi_hat.z;
+				hessianphitheta[1][1] = hessian[1][0] * phi_hat.x + hessian[1][1] * phi_hat.y + hessian[2][1] * phi_hat.z;
+				hessianphitheta[2][1] = hessian[2][0] * phi_hat.x + hessian[2][1] * phi_hat.y + hessian[2][2] * phi_hat.z;
+
+				float hessianphitheta2[2][2];
+				hessianphitheta2[0][0] = hessianphitheta[0][0] * theta_hat.x + hessianphitheta[1][0] * theta_hat.y + hessianphitheta[2][0] * theta_hat.z;
+				hessianphitheta2[0][1] = hessianphitheta[0][1] * theta_hat.x + hessianphitheta[1][1] * theta_hat.y + hessianphitheta[2][1] * theta_hat.z;
+				hessianphitheta2[1][0] = hessianphitheta[0][0] * phi_hat.x + hessianphitheta[1][0] * phi_hat.y + hessianphitheta[2][0] * phi_hat.z;
+				hessianphitheta2[1][1] = hessianphitheta[0][1] * phi_hat.x + hessianphitheta[1][1] * phi_hat.y + hessianphitheta[2][1] * phi_hat.z;
+
+				float tr = hessianphitheta2[0][0] + hessianphitheta2[1][1];
+				float d = hessianphitheta2[0][0] * hessianphitheta2[1][1] - hessianphitheta2[0][1] * hessianphitheta2[1][0];
+				float lambda1 = (tr + sqrt(tr * tr - 4 * d)) / 2;
+				float lambda2 = (tr - sqrt(tr * tr - 4 * d)) / 2;
+
+				float eig1, eig2, eig3;
+				eigenvalues(hessian, eig1, eig2, eig3);
+				/*
+				// placeholder values if eigs are not positive
+				float d4fdeig1_4 = -1, d4fdeig2_4 = -1, d4fdeig3_4 = -1;
+
+				// this gives us the priciple curvature
+				float3 ev1, ev2, ev3;
+				eigenvector(hessian, eig1, ev1);
+				eigenvector(hessian, eig2, ev2);
+				eigenvector(hessian, eig3, ev3);
+
+
+				if (eig1 >= 0) { // if eig1 >=0 check if the fourth derivative is >=0
+					d4fdeig1_4 = fourth_directional_deriv(gradientField, x2, y2, z2, ev1);
+				}
+				if (eig2 >= 0) {
+					d4fdeig2_4 = fourth_directional_deriv(gradientField, x2, y2, z2, ev2);
+				}
+				if (eig3 >= 0) {
+					d4fdeig3_4 = fourth_directional_deriv(gradientField, x2, y2, z2, ev3);
+				}*/
+
+				if ( //(eig1 >= 0 && d4fdeig1_4 >=0) || (eig2 >= 0 && d4fdeig2_4 >=0) || (eig3 >= 0 && d4fdeig3_4 >= 0)
+					(eig1 >= 0) || (eig2 >= 0) || (eig3 >= 0)
+					) {
+					//|| d2fdr2 >= 0 || lambda1 >= 0 || lambda2 >= 0
+					//d2fdg2 >=0
+					//((eig1 >=0) &&  (eig2>= 0)) || ((eig1>=0) && (eig3>=0)) || ((eig2>=0)&&(eig3>=0)) 
+					//eig1+eig2+eig3 >= 0
+					//|| d2fdr2 >= 0 
+					//|| next_laplacian - d2fdr2 >= 0 // || next_laplacian < this_laplacian //-1/(sigma*sigma)*0.37
+					//|| next_gradient.x * r.x + next_gradient.y * r.y + next_gradient.z * r.z >= 0
+					//|| next_gaussian > this_gaussian // solves kissing problem?
+
+					// if laplacian is greater than or equal 0, then we're in the boundary.
+					// also if on boundary of image
+					boundary.push_back(std::make_tuple(x2, y2, z2));
+				}
+				else {
+					// if laplacian is less than 0, then we're in points
+					points.push_back(std::make_tuple(x2, y2, z2));
+				}
+			}
+			visited[(1024 + x2 - x_orig) + (1024 + y2 - y_orig) * width + (100 + z2 - z_orig) * width * height] = 1;
+		}
+	}
+	delete[] visited;
+}
+
