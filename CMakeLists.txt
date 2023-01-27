@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.20)
 
 set(CMAKE_BUILD_TYPE "Release")
 # set the project name
@@ -19,22 +19,29 @@ find_package(OpenCV CONFIG REQUIRED)
 find_package(TIFF REQUIRED) 
 
 #
-add_executable(Analysis analysis.cpp)
+#add_executable(Analysis analysis.cpp)
+
+set(EXECUTABLE_LIST analysis_endogenous_0x analysis2015-05-18 analysis_0x analysisU2OSHCR analysis_1x_10x tests)
+
+FOREACH(EXECUTABLE ${EXECUTABLE_LIST})
+	add_executable(${EXECUTABLE} ${EXECUTABLE}.cpp)
+
 #
-target_link_libraries(Analysis PRIVATE
-			       ${OpenCV_LIBS}
-				   ${TIFF_LIBS}
-				   ${TIFF_LIBRARY}
-			       )
+	target_link_libraries(${EXECUTABLE} PRIVATE
+					${OpenCV_LIBS}
+					${TIFF_LIBS}
+					${TIFF_LIBRARY}
+					)
 
-target_include_directories(Analysis PUBLIC
-				    ${PROJECT_BINARY_DIR}
-				    ${OpenCV_INCLUDE_DIRS}
-					${TIFF_INCLUDE_DIRS}
-				    ) 
+	target_include_directories(${EXECUTABLE} PUBLIC
+						${PROJECT_BINARY_DIR}
+						${OpenCV_INCLUDE_DIRS}
+						${TIFF_INCLUDE_DIRS}
+						) 
 
-set_property (TARGET ${PROJECT_NAME}
-  PROPERTY
-    # Enable C++17 standard compliance
-    CXX_STANDARD 17
-)
+	set_property (TARGET ${EXECUTABLE}
+		PROPERTY
+		# Enable C++17 standard compliance
+			CXX_STANDARD 17
+	)
+ENDFOREACH()

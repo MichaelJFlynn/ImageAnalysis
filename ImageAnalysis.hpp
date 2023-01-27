@@ -49,7 +49,7 @@ public:
 	std::vector<Dot*> close_dots640;
 
 	bool validSize() {
-		return points.size() > size_lower_limit && points.size() < size_upper_limit;
+		return points.size() >= size_lower_limit && points.size() <= size_upper_limit;
 	}
 };
 
@@ -63,7 +63,7 @@ public:
 	}
 
 	bool validSize() {
-		return points.size() > size_lower_limit && points.size() < size_upper_limit;
+		return points.size() >= size_lower_limit && points.size() <= size_upper_limit;
 	}
 };
 
@@ -566,10 +566,9 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 
 	concurrency::static_partitioner partitioner;
 	//concurrency::critical_section cs;
-
-	uint16_t* yaxis = new uint16_t[height];
-	float* zaxis = new float[depth];
-	float* xaxis = new float[width]; 
+	uint16_t* yaxis = new uint16_t[height*width];
+	float* zaxis = new float[depth*height];
+	float* xaxis = new float[width*depth]; 
 
 	concurrency::parallel_for(0, width, [&input, &result, &sigmaxy, &kernelxy, &temp, &yaxis, depth, width, height](int x) {
 		for (int z = 0; z < depth; z++) {
@@ -577,8 +576,10 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 			//const  int h = height;
 
 			for (int y = 0; y < height; y++) {
-				yaxis[y] = input[x + width * height * z + y * width];
+				yaxis[height * x + y] = input[x + width * height * z + y * width];
+				//result[z * height + height * depth * x + y] = input[x + width * height * z + y * width];
 			}
+			//continue;
 
 			for (int y = 0; y < height; y++) {
 				float sum = 0;
@@ -597,10 +598,10 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 				}
 
 				for (int j = j_min; j < y; j++) {
-					sum += yaxis[j] * kernelxy[y - j];
+					sum += yaxis[height*x + j] * kernelxy[y - j];
 				}
 				for (int j = y; j < j_max; j++) {
-					sum += yaxis[j] * kernelxy[j - y];
+					sum += yaxis[height*x + j] * kernelxy[j - y];
 				}
 				result[z * height + height * depth * x + y] = sum;
 			}
@@ -612,8 +613,10 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 		for (int x = 0; x < width; x++) {
 			// copy to contiguous memory
 			for (int z = 0; z < depth;z++) {
-				zaxis[z] = result[y + height * depth * x + z * height];
+				zaxis[depth*y + z] = result[y + height * depth * x + z * height];
+				//temp[depth * x + width * depth * y + z] = result[y + height * depth * x + z * height];
 			}
+			//continue;
 			for (int z = 0; z < depth; z++) {
 				int j_min, j_max;
 				float sum = 0;
@@ -631,10 +634,10 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 				}
 
 				for (int j = j_min; j < z; j++) {
-					sum += zaxis[j] * kernelz[z - j];
+					sum += zaxis[depth*y + j] * kernelz[z - j];
 				}
 				for (int j = z; j < j_max; j++) {
-					sum += zaxis[j] * kernelz[j - z];
+					sum += zaxis[depth*y + j] * kernelz[j - z];
 				}
 				temp[depth * x + width * depth * y + z] = sum;
 			}
@@ -646,8 +649,10 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 		for (int y = 0; y < height; y++) {
 			int j_min, j_max;
 			for (int x = 0; x < width; x++) {
-				xaxis[x] = temp[z + width * depth * y + x * depth];
+				xaxis[width*z + x] = temp[z + width * depth * y + x * depth];
+				//result[width * y + width * height * z + x] = temp[z + width * depth * y + x * depth];
 			}
+			//continue;
 			for (int x = 0; x < width; x++) {
 				float sum = 0;
 				if (x - GAUSSIAN_CUTOFF * sigmaxy > 0) {
@@ -663,10 +668,10 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 					j_max = width;
 				}
 				for (int j = j_min; j < x; j++) {
-					sum += xaxis[j] * kernelxy[x - j];
+					sum += xaxis[width*z + j] * kernelxy[x - j];
 				}
 				for (int j = x; j < j_max; j++) {
-					sum += xaxis[j] * kernelxy[j - x];
+					sum += xaxis[width*z + j] * kernelxy[j - x];
 				}
 				//cs.lock();
 				result[width * y + width * height * z + x] = sum;
@@ -678,10 +683,63 @@ void gaussian_filter3D_parallel(uint16_t* input, const int width, const int heig
 	// clean up
 	// delete 
 	delete[] zaxis;
+	delete[] xaxis;
 	delete[] yaxis;
 	delete[] temp;
 	delete[] kernelxy;
 	delete[] kernelz;
+}
+
+uint16_t median(uint16_t* arr, int len) {
+	uint16_t* A = new uint16_t[len];
+	uint16_t* B = new uint16_t[len];
+
+	uint16_t* current;
+	uint16_t* next;
+	current = A;
+	next = B;
+	for (int i = 0; i < len; i++) {
+		A[i] = arr[i];
+	}
+
+	// find nth member of the list
+	int start_index = 0;
+	int n = len/2;
+	while (len > 0) {
+		int num_lesser = 0, num_greater = 0;
+		uint16_t pivot = current[start_index];
+		for (int i = 1; i < len; i++) {
+			if (current[start_index + i] > pivot) {
+				next[start_index + len - 1 - num_greater] = current[start_index + i];
+				num_greater++;
+			}
+			else {
+				next[start_index + num_lesser] = current[start_index + i];
+				num_lesser++;
+			}
+		}
+		if (num_lesser == n - 1) { // we've found the nth member
+			return pivot;
+		}
+		else if (num_lesser > n - 1) { // n-1 is in the lesser list
+			next[start_index + len - 1 - num_greater] = pivot;
+			num_greater++;
+			len = len - num_greater;
+		}
+		else { // n-1 is in the greater list
+			next[start_index + num_lesser] = pivot;
+			num_lesser++;
+			start_index += num_lesser;
+			len = len - num_lesser;
+			n = n - num_lesser;
+		}
+		uint16_t* temp = current;
+		current = next;
+		next = temp;
+	}
+
+	delete[] A;
+	delete[] B;
 }
 
 
@@ -972,13 +1030,13 @@ void segment_blob(
 			int x2, y2, z2;
 			std::tie(x2, y2, z2) = new_points.at(i);
 
-			if (x2 - x_orig > 1023 || y2 - y_orig > 1023 || z2 - z_orig > 100 || x2 - x_orig < -1023 || y2 - y_orig < -1023 || z2 - z_orig < -100) {
-				std::cout << "Error in segment_blob: cell too big: " << x2 - x_orig << " " << y2 - y_orig << " " << z2 - z_orig << std::endl;
-				delete[] visited;
-				return;
-			}
+			//if (x2 - x_orig > 1023 || y2 - y_orig > 1023 || z2 - z_orig > 100 || x2 - x_orig < -1023 || y2 - y_orig < -1023 || z2 - z_orig < -100) {
+				//std::cout << "Error in segment_blob: cell too big: " << x2 - x_orig << " " << y2 - y_orig << " " << z2 - z_orig << std::endl;
+				//delete[] visited;
+				//return;
+			//}
 
-			if (visited[(1024 + x2 - x_orig) + (1024 + y2 - y_orig) * width + (100 + z2 - z_orig) * width * height] == 1) {
+			if (visited[x2 + y2 * width + z2 * width * height] == 1) {
 				continue;
 			}
 			if (x2 == 0 || y2 == 0 || z2 == 0 || x2 == width - 1  || y2 == height - 1 || z2 == depth - 1 ) {
@@ -1105,9 +1163,167 @@ void segment_blob(
 					points.push_back(std::make_tuple(x2, y2, z2));
 				}
 			}
-			visited[(1024 + x2 - x_orig) + (1024 + y2 - y_orig) * width + (100 + z2 - z_orig) * width * height] = 1;
+			visited[x2 + y2 * width + z2 * width * height] = 1;
 		}
 	}
 	delete[] visited;
 }
 
+void scanfloat(float* image, const int width, const int height, const int depth, const float min, const float max) {
+	int i = 0;
+	int k = 0;
+	int key = 0;
+	do {
+		cv::Mat img(width, height, CV_32F, image + width * height * i);
+		//double min, max;
+		//cv::minMaxLoc(img, &min, &max);
+		//img = (img - min) / (max - min);
+
+		/*
+		cv::Mat dst(2048, 2048, CV_32FC3);
+		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
+
+		//cv::Mat img(2048, 2048, CV_16U, stack + 2048 * 2048 * i);
+		for (int l = 0; l < nucleii.size(); l++) {
+			Nucleus* nuc = nucleii.at(l);
+			std::tuple<int, int, int> max = nuc->local_max;
+
+			if (nuc->validSize()) {
+				int z = std::get<2>(max);
+				if (abs(i - z) < 10) {
+					int cx = std::get<0>(max);
+					int cy = std::get<1>(max);
+					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+				}
+
+				for (int j = 0; j < nuc->boundary.size(); j++) {
+					int x, y, z;
+
+					std::tie(x, y, z) = nuc->boundary.at(j);
+
+					if (z == i) {
+						if (l == k) {
+							BGR_float& bgr = dst.ptr<BGR_float>(y)[x];
+							bgr.red = 1;
+							bgr.green = 0;
+							bgr.blue = 0;
+						}
+						else {
+							BGR_float& bgr = dst.ptr<BGR_float>(y)[x];
+							bgr.red = 0;
+							bgr.green = 1;
+							bgr.blue = 0;
+						}
+					}
+				}
+			}
+		}*/
+
+		cv::Mat resized(512, 512, CV_32F);
+		//cv::Mat resized(512, 512, CV_16U);
+		cv::resize(img, resized, cv::Size(512, 512));
+		resized = (resized - min) / (max - min);
+
+
+		//cv::imshow("Display window", resized / 20);
+		cv::imshow("Display window", resized);
+		key = cv::waitKey(0);
+		if (key == 's') {
+			i = (i + 1) % depth;
+		}
+		else if (key == 'w') {
+			i = (depth + i - 1) % depth;
+		} /*
+		else if (key == 'a') {
+			k = (k + 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
+		}
+		else if (key == 'd') {
+			k = (nucleii.size() + k - 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
+		}
+		else {
+			//blink = !blink;
+		} */
+
+	} while (key != 27);
+}
+
+
+void scanInt(uint16_t* image, const int width, const int height, const int depth) {
+	int i = 0;
+	int k = 0;
+	int key = 0;
+	do {
+		cv::Mat img(width, height, CV_16U, image + width * height * i);
+		//double min, max;
+		//cv::minMaxLoc(img, &min, &max);
+		//img = img * 255;
+
+		/*
+		cv::Mat dst(2048, 2048, CV_32FC3);
+		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
+
+		//cv::Mat img(2048, 2048, CV_16U, stack + 2048 * 2048 * i);
+		for (int l = 0; l < nucleii.size(); l++) {
+			Nucleus* nuc = nucleii.at(l);
+			std::tuple<int, int, int> max = nuc->local_max;
+
+			if (nuc->validSize()) {
+				int z = std::get<2>(max);
+				if (abs(i - z) < 10) {
+					int cx = std::get<0>(max);
+					int cy = std::get<1>(max);
+					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+				}
+
+				for (int j = 0; j < nuc->boundary.size(); j++) {
+					int x, y, z;
+
+					std::tie(x, y, z) = nuc->boundary.at(j);
+
+					if (z == i) {
+						if (l == k) {
+							BGR_float& bgr = dst.ptr<BGR_float>(y)[x];
+							bgr.red = 1;
+							bgr.green = 0;
+							bgr.blue = 0;
+						}
+						else {
+							BGR_float& bgr = dst.ptr<BGR_float>(y)[x];
+							bgr.red = 0;
+							bgr.green = 1;
+							bgr.blue = 0;
+						}
+					}
+				}
+			}
+		}*/
+
+		cv::Mat resized(512, 512, CV_16U);
+		cv::resize(img, resized, cv::Size(512, 512));
+		resized = resized * 255;
+
+		//cv::imshow("Display window", resized / 20);
+		cv::imshow("Display window", resized);
+		key = cv::waitKey(0);
+		if (key == 's') {
+			i = (i + 1) % depth;
+		}
+		else if (key == 'w') {
+			i = (depth + i - 1) % depth;
+		} /*
+		else if (key == 'a') {
+			k = (k + 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
+		}
+		else if (key == 'd') {
+			k = (nucleii.size() + k - 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
+		}
+		else {
+			//blink = !blink;
+		} */
+
+	} while (key != 27);
+}
