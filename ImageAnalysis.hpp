@@ -1,6 +1,24 @@
 #pragma once
 
-#define GAUSSIAN_CUTOFF 4
+#include <iostream>
+#include <cmath>
+#include <tuple>
+#include <optional>
+#include <stack>
+#include <concurrent_vector.h>
+#include <time.h>
+#include <opencv2/highgui.hpp>
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/mat.hpp>
+#include <tiff.h>
+#include <tiffio.h>
+#include <fstream>
+// WINDOWS SPECIFIC CONCURRENCY RUNTIME
+#include <ppl.h>
+#include <ppltasks.h>
+
+
+#define GAUSSIAN_CUTOFF 6
 #define M_PI 3.14159265358979323846
 
 
@@ -546,7 +564,8 @@ void eigenvector(std::array<std::array<float, 3>, 3> hessian, float eig, float3&
 // medium fast gaussian filter
 // In this function, for optimization purposes I try to use some pointer
 // arithmetic so that I'm always reading from continuous memory.
-void gaussian_filter3D_parallel(uint16_t* input, const int width, const int height, const int depth, int sigmaxy, int sigmaz, float* result) {
+template <typename T>
+void gaussian_filter3D_parallel(T* input, const int width, const int height, const int depth, int sigmaxy, int sigmaz, float* result) {
 	float float_sigmaxy = (float)sigmaxy;
 	float float_sigmaz = (float)sigmaz;
 	// prerun expensive exp operation in 1d array
