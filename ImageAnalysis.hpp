@@ -1467,3 +1467,44 @@ void segmentNuclei(uint16_t* stack,
 	std::cout << "done." << std::endl;
 	std::cout << "blob segmentation took: " << difftime(end, start) << " seconds." << std::endl;
 }
+
+
+void findDots(uint16_t* stack,
+	uint16_t* median,
+	float* gaussian,
+	std::vector<std::tuple<int, int, int>>& maxima,
+	int threshold_lower,
+	int threshold_higher,
+	int sigmaxy,
+	int sigmaz,
+	int width, int height, int depth) {
+
+	std::cout << "median...";
+	medianFilter3x3(stack, width, height, depth, median);
+	std::cout << "done." << std::endl;
+
+	uint16_t* pointer = median;
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				if ((*pointer) <= threshold_lower) {
+					*pointer = 0;
+				}
+				else if ((*pointer) > threshold_higher) {
+					*pointer = threshold_higher - threshold_lower;
+				}
+				else {
+					*pointer = (*pointer) - threshold_lower;
+				}
+				pointer++;
+			}
+		}
+	}
+	std::cout << "computing gaussian...";
+	gaussian_filter3D_parallel(median, width, height, depth, sigmaxy, sigmaz, gaussian);
+	std::cout << "done." << std::endl;
+
+	findMaxima(gaussian, width, height, depth, maxima);
+	std::cout << "Found " << maxima.size() << " dots." << std::endl;
+
+}
