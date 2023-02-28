@@ -1390,3 +1390,80 @@ void displayBlobsFloat(float* stack, int width, int height, int depth, std::vect
 
 	} while (key != 27);
 }
+
+void segmentNuclei(uint16_t* stack, 
+	uint16_t* filtered,
+	float* gaussian_result,
+	float3* gradientField,
+	std::vector<Nucleus*>& nuclei, 
+	std::vector<std::tuple<int, int, int>>& maxima,
+	int threshold_405_lower,
+	int threshold_405_higher,
+	int sigmaxy, 
+	int sigmaz,
+	int width, int height, int depth) {
+
+	time_t start, end;
+	std::cout << "Computing median filter...";
+	time(&start);
+	medianFilter3x3(stack, width, height, depth, filtered);
+	time(&end);
+	std::cout << "done." << std::endl;
+	std::cout << "median filter took " << end - start << "seconds" << std::endl;
+
+	uint16_t* pointer = filtered;
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				if ((*pointer) <= threshold_405_lower) {
+					*pointer = 0;
+				}
+				else if ((*pointer) >= threshold_405_higher) {
+					*pointer = threshold_405_higher - threshold_405_lower;
+				}
+				else {
+					*pointer = (*pointer) - threshold_405_lower;
+				}
+				pointer++;
+			}
+		}
+	}
+
+	std::cout << "Computing gaussian filter...";
+	time(&start);
+	gaussian_filter3D_parallel<uint16_t>(filtered, width, height, depth, sigmaxy, sigmaz, gaussian_result);
+	std::cout << "done." << std::endl;
+	time(&end);
+
+	time(&start);
+	findMaxima(gaussian_result, width, height, depth, maxima);
+	time(&end);
+	std::cout << "Found " << maxima.size() << " nuclei." << std::endl;
+	std::cout << "findMaxima took " << difftime(end, start) << " seconds." << std::endl;
+
+	std::cout << "computing gradient field...";
+	time(&start);
+	gradientField3d(gaussian_result, width, height, depth, gradientField);
+	std::cout << "done." << std::endl;
+	time(&end);
+	std::cout << "Gradient field took: " << difftime(end, start) << " seconds." << std::endl;
+
+	std::cout << "segmenting blobs...";
+	nuclei.resize(maxima.size());
+	time(&start);
+	concurrency::static_partitioner partitioner;
+
+	concurrency::parallel_for(0, (int)maxima.size(), [&maxima, &nuclei, &width, &height, &depth, gradientField](int j) {
+		Nucleus* blob = new Nucleus(1e7, 3e1);
+		blob->id = j;
+		blob->points.reserve(200000);
+		blob->boundary.reserve(20000);
+		blob->local_max = maxima.at(j);
+		segment_blob(blob->points, blob->boundary, maxima.at(j), gradientField, width, height, depth);
+		nuclei.at(j) = blob;
+		}, partitioner);
+	time(&end);
+
+	std::cout << "done." << std::endl;
+	std::cout << "blob segmentation took: " << difftime(end, start) << " seconds." << std::endl;
+}
