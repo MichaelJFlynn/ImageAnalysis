@@ -86,6 +86,22 @@ public:
 };
 
 
+void getTiffDimensions(const char* filename, int& width, int& height, int& depth) {
+	TIFF* tiff = TIFFOpen(filename, "r");
+	TIFFSetWarningHandler(0);
+
+
+	TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
+	TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height);
+
+	depth = 0;
+	while (TIFFSetDirectory(tiff, depth)) {
+		depth++;
+	}
+
+	TIFFClose(tiff);
+}
+
 void loadTiff(uint16_t* output, const char* filename, const int width, const int height, const int depth) {
 		TIFF* tiff = TIFFOpen(filename, "r");
 
@@ -827,7 +843,7 @@ void medianFilter3x3(uint16_t* voxels, const int width, const int height, const 
 }
 
 
-// does not compute laplacian on the boundary.
+// does not compute laplacian on the boundary
 // can be implemented later with a one-sided stencil. 
 // but I could not find the terms using a quick google search. 
 void laplacianFilter3D(float* voxels, const int width, const int height, const int depth, float* laplacian) {
@@ -1194,57 +1210,10 @@ void scanfloat(float* image, const int width, const int height, const int depth,
 	int key = 0;
 	do {
 		cv::Mat img(width, height, CV_32F, image + width * height * i);
-		//double min, max;
-		//cv::minMaxLoc(img, &min, &max);
-		//img = (img - min) / (max - min);
-
-		/*
-		cv::Mat dst(2048, 2048, CV_32FC3);
-		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
-
-		//cv::Mat img(2048, 2048, CV_16U, stack + 2048 * 2048 * i);
-		for (int l = 0; l < nucleii.size(); l++) {
-			Nucleus* nuc = nucleii.at(l);
-			std::tuple<int, int, int> max = nuc->local_max;
-
-			if (nuc->validSize()) {
-				int z = std::get<2>(max);
-				if (abs(i - z) < 10) {
-					int cx = std::get<0>(max);
-					int cy = std::get<1>(max);
-					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
-				}
-
-				for (int j = 0; j < nuc->boundary.size(); j++) {
-					int x, y, z;
-
-					std::tie(x, y, z) = nuc->boundary.at(j);
-
-					if (z == i) {
-						if (l == k) {
-							BGR_float& bgr = dst.ptr<BGR_float>(y)[x];
-							bgr.red = 1;
-							bgr.green = 0;
-							bgr.blue = 0;
-						}
-						else {
-							BGR_float& bgr = dst.ptr<BGR_float>(y)[x];
-							bgr.red = 0;
-							bgr.green = 1;
-							bgr.blue = 0;
-						}
-					}
-				}
-			}
-		}*/
-
 		cv::Mat resized(512, 512, CV_32F);
-		//cv::Mat resized(512, 512, CV_16U);
+
 		cv::resize(img, resized, cv::Size(512, 512));
 		resized = (resized - min) / (max - min);
-
-
-		//cv::imshow("Display window", resized / 20);
 		cv::imshow("Display window", resized);
 		key = cv::waitKey(0);
 		if (key == 's') {
@@ -1252,19 +1221,7 @@ void scanfloat(float* image, const int width, const int height, const int depth,
 		}
 		else if (key == 'w') {
 			i = (depth + i - 1) % depth;
-		} /*
-		else if (key == 'a') {
-			k = (k + 1) % nucleii.size();
-			i = std::get<2>(nucleii.at(k)->local_max);
-		}
-		else if (key == 'd') {
-			k = (nucleii.size() + k - 1) % nucleii.size();
-			i = std::get<2>(nucleii.at(k)->local_max);
-		}
-		else {
-			//blink = !blink;
-		} */
-
+		} 
 	} while (key != 27);
 }
 
@@ -1275,15 +1232,32 @@ void scanInt(uint16_t* image, const int width, const int height, const int depth
 	int key = 0;
 	do {
 		cv::Mat img(width, height, CV_16U, image + width * height * i);
-		//double min, max;
-		//cv::minMaxLoc(img, &min, &max);
-		//img = img * 255;
+		cv::Mat resized(512, 512, CV_16U);
+		cv::resize(img, resized, cv::Size(512, 512));
+		resized = resized * 255;
 
-		/*
-		cv::Mat dst(2048, 2048, CV_32FC3);
+		cv::imshow("Display window", resized);
+		key = cv::waitKey(0);
+		if (key == 's') {
+			i = (i + 1) % depth;
+		}
+		else if (key == 'w') {
+			i = (depth + i - 1) % depth;
+		} 
+	} while (key != 27);
+}
+
+
+void displayBlobsInt(uint16_t* stack, int width, int height, int depth, std::vector<Nucleus*>& nucleii) {
+	int i = 0;
+	int k = 0;
+	bool blink = true;
+	int key = 0;
+	do {
+		cv::Mat img(width, height, CV_16U, stack + width * height * i);
+		cv::Mat dst(width, height, CV_16UC3);
 		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
 
-		//cv::Mat img(2048, 2048, CV_16U, stack + 2048 * 2048 * i);
 		for (int l = 0; l < nucleii.size(); l++) {
 			Nucleus* nuc = nucleii.at(l);
 			std::tuple<int, int, int> max = nuc->local_max;
@@ -1294,6 +1268,78 @@ void scanInt(uint16_t* image, const int width, const int height, const int depth
 					int cx = std::get<0>(max);
 					int cy = std::get<1>(max);
 					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+				}
+
+				for (int j = 0; j < nuc->boundary.size(); j++) {
+					int x, y, z;
+
+					std::tie(x, y, z) = nuc->boundary.at(j);
+
+					if (z == i) {
+						if (l == k) {
+							BGR& bgr = dst.ptr<BGR>(y)[x];
+							bgr.red = 255;
+							bgr.green = 0;
+							bgr.blue = 0;
+						}
+						else {
+							BGR& bgr = dst.ptr<BGR>(y)[x];
+							bgr.red = 0;
+							bgr.green = 255;
+							bgr.blue = 0;
+						}
+					}
+				}
+			}
+		}
+		//cv::Mat resized(512, 512, CV_32F);
+		cv::Mat resized(512, 512, CV_16UC3);
+		cv::resize(dst, resized, cv::Size(512, 512));
+		//cv::imshow("Display window", resized);
+		cv::imshow("Display window", resized * 255);
+		key = cv::waitKey(0);
+		if (key == 's') {
+			i = (i + 1) % depth;
+		}
+		else if (key == 'w') {
+			i = (depth + i - 1) % depth;
+		}
+		else if (key == 'a') {
+			k = (k + 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
+		}
+		else if (key == 'd') {
+			k = (nucleii.size() + k - 1) % nucleii.size();
+			i = std::get<2>(nucleii.at(k)->local_max);
+		}
+		else {
+			//blink = !blink;
+		}
+
+	} while (key != 27);
+}
+
+
+void displayBlobsFloat(float* stack, int width, int height, int depth, std::vector<Nucleus*>& nucleii) {
+	int i = 0;
+	int k = 0;
+	bool blink = true;
+	int key = 0;
+	do {
+		cv::Mat img(width, height, CV_32F, stack + width * height * i);
+		cv::Mat dst(width, height, CV_32FC3);
+		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
+
+		for (int l = 0; l < nucleii.size(); l++) {
+			Nucleus* nuc = nucleii.at(l);
+			std::tuple<int, int, int> max = nuc->local_max;
+
+			if (nuc->validSize()) {
+				int z = std::get<2>(max);
+				if (abs(i - z) < 10) {
+					int cx = std::get<0>(max);
+					int cy = std::get<1>(max);
+					cv::rectangle(dst, cv::Point(cx - 5, cy - 5), cv::Point(cx + 5, cy + 5), cv::Scalar(0, 0, 1), cv::FILLED, cv::LINE_8);
 				}
 
 				for (int j = 0; j < nuc->boundary.size(); j++) {
@@ -1317,13 +1363,11 @@ void scanInt(uint16_t* image, const int width, const int height, const int depth
 					}
 				}
 			}
-		}*/
-
-		cv::Mat resized(512, 512, CV_16U);
-		cv::resize(img, resized, cv::Size(512, 512));
-		resized = resized * 255;
-
-		//cv::imshow("Display window", resized / 20);
+		}
+		//cv::Mat resized(512, 512, CV_32F);
+		cv::Mat resized(512, 512, CV_32FC3);
+		cv::resize(dst, resized, cv::Size(512, 512));
+		//cv::imshow("Display window", resized);
 		cv::imshow("Display window", resized);
 		key = cv::waitKey(0);
 		if (key == 's') {
@@ -1331,7 +1375,7 @@ void scanInt(uint16_t* image, const int width, const int height, const int depth
 		}
 		else if (key == 'w') {
 			i = (depth + i - 1) % depth;
-		} /*
+		}
 		else if (key == 'a') {
 			k = (k + 1) % nucleii.size();
 			i = std::get<2>(nucleii.at(k)->local_max);
@@ -1342,7 +1386,7 @@ void scanInt(uint16_t* image, const int width, const int height, const int depth
 		}
 		else {
 			//blink = !blink;
-		} */
+		}
 
 	} while (key != 27);
 }
