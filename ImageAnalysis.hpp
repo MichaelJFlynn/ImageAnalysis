@@ -65,6 +65,9 @@ public:
 	int id;
 	std::vector<Dot*> close_dots594;
 	std::vector<Dot*> close_dots640;
+	std::vector<std::tuple<int, int, int>> close_points594;
+	std::vector<std::tuple<int, int, int>> close_points640;
+
 
 	bool validSize() {
 		return points.size() >= size_lower_limit && points.size() <= size_upper_limit;
@@ -84,6 +87,22 @@ public:
 		return points.size() >= size_lower_limit && points.size() <= size_upper_limit;
 	}
 };
+
+
+
+int deltaXSq(std::tuple<int, int, int> X, std::tuple<int, int, int> Y) {
+	int x1, y1, z1, x2, y2, z2;
+	std::tie(x1, y1, z1) = X;
+	std::tie(x2, y2, z2) = Y;
+	x1 = x1 - x2;
+	y1 = y1 - y2;
+	z1 = z1 - z2;
+	return x1 * x1 + y1 * y1 + z1 * z1;
+}
+float deltaX(std::tuple<int, int, int> X, std::tuple<int, int, int> Y) {
+	return sqrt(deltaXSq(X, Y));
+
+}
 
 
 void getTiffDimensions(const char* filename, int& width, int& height, int& depth) {
@@ -108,7 +127,7 @@ void loadTiff(uint16_t* output, const char* filename, const int width, const int
 		// turn off warnings
 		TIFFSetWarningHandler(0);
 
-		int zed = 0;
+		int zed = 0, z = 0;
 		do {
 			int ied = 0;
 			for (int i = 0; i < height; i++) {
@@ -116,7 +135,8 @@ void loadTiff(uint16_t* output, const char* filename, const int width, const int
 				ied += width;
 			}
 			zed += width * height;
-		} while (TIFFReadDirectory(tiff));
+			z++;
+		} while (TIFFReadDirectory(tiff) && z < depth);
 		TIFFClose(tiff);
 }
 
@@ -1422,7 +1442,7 @@ void segmentNuclei(uint16_t* stack,
 					*pointer = threshold_405_higher - threshold_405_lower;
 				}
 				else {
-					*pointer = (*pointer) - threshold_405_lower;
+				*pointer = (*pointer) - threshold_405_lower;
 				}
 				pointer++;
 			}
@@ -1506,5 +1526,272 @@ void findDots(uint16_t* stack,
 
 	findMaxima(gaussian, width, height, depth, maxima);
 	std::cout << "Found " << maxima.size() << " dots." << std::endl;
+}
 
+
+std::tuple<int, int> closestBlob(std::tuple<int, int, int> point, std::vector<Nucleus*> blobs, int celldiameter) {
+	int n = 0;
+	Blob* nuc = blobs.at(0);
+	int min_dist = deltaXSq(point, nuc->points.at(0));
+	for (int j = 1; j < nuc->points.size(); j++) {
+		int dist = deltaXSq(point, nuc->points.at(j));
+		if (dist < min_dist) {
+			min_dist = dist;
+		}
+	}
+	for (int k = 1; k < blobs.size(); k++) {
+		nuc = blobs.at(k);
+		// skip if we are more than 3 cell diameters away from cell center
+		if (deltaXSq(point, nuc->local_max) > 9 * celldiameter * celldiameter) continue;
+		for (int j = 0; j < nuc->points.size(); j++){
+				int dist = deltaXSq(point, nuc->points.at(j));
+				if (dist < min_dist) {
+					min_dist = dist;
+					n = k;
+				}
+			}
+			if (min_dist == 0) break;
+		}
+		return std::make_tuple(min_dist, n);
+}
+
+
+cv::Mat closeUpCellDotMaxProjectImg(Nucleus* nuc, uint16_t* stack, uint16_t* median594, uint16_t* median647,
+	float blue_pixel_lower,
+	float blue_pixel_upper,
+	float green_pixel_lower,
+	float green_pixel_upper,
+	float red_pixel_lower,
+	float red_pixel_upper,
+	float white_pixel_lower,
+	float white_pixel_upper,
+	int width, int height, int depth) {
+
+	int nx, ny, nz, i;
+	std::tie(nx, ny, nz) = nuc->local_max;
+	i = nz;
+	cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
+
+	// we are going to look at range from maxima-150 to maxima+150
+	for (int rx = -200; rx <= 200; rx++) {
+		if (nx + rx < 0 || nx + rx >= width) {
+			continue;
+		}
+		for (int ry = -200; ry <= 200; ry++) {
+			if (ny + ry < 0 || ny + ry >= height) {
+				continue;
+			}
+			BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
+
+			for (int zh = i - 50; zh < i + 50; zh++) {
+				if (zh < 0) continue;
+				if (zh >= depth) break;
+				uint16_t green = median594[(nx + rx) + (ny + ry) * width + width * height * zh];
+				if (bgr.green < 255 * 255 && bgr.green < (green - green_pixel_lower) * (255 * 255 / green_pixel_upper)) {
+					if (green > green_pixel_upper) bgr.green = 255 * 255;
+					else bgr.green = (green - green_pixel_lower) * (255 * 255 / green_pixel_upper);
+				}
+				uint16_t blue = stack[(nx + rx) + (ny + ry) * width + width * height * zh];
+
+				if (bgr.blue < 255 * 255 && bgr.blue < (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper)) {
+					if (blue > blue_pixel_upper) bgr.blue = 255 * 255;
+					else bgr.blue = (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper);
+				}
+
+				uint16_t red = median647[(nx + rx) + (ny + ry) * width + width * height * zh];
+				if (bgr.red < 255 * 255 && bgr.red < (red - red_pixel_lower) * (255 * 255 / red_pixel_upper)) {
+					if (red > red_pixel_upper) bgr.red = 255 * 255;
+					else bgr.red = (red - red_pixel_lower) * (255 * 255 / red_pixel_upper);
+				}
+			}
+		}
+	}
+
+	// for all the dots, show their outline
+	for (int j = 0; j < nuc->close_points594.size(); j++) {
+		int dx, dy, dz;
+		std::tie(dx, dy, dz) = nuc->close_points594.at(j);
+		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
+		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+
+	}
+
+	// for all the dots, show their outline
+	for (int j = 0; j < nuc->close_points640.size(); j++) {
+		int dx, dy, dz;
+		std::tie(dx, dy, dz) = nuc->close_points640.at(j);
+		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
+		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+	}
+
+	for (int j = 0; j < nuc->boundary.size(); j++) {
+		int x, y, z;
+
+		std::tie(x, y, z) = nuc->boundary.at(j);
+
+		if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+		if (z == i) {
+			BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+			bgr.red = 255 * 255;
+			bgr.green = 255 * 255;
+			bgr.blue = 255 * 255;
+
+		}
+	}
+	return img;
+}
+
+void closeUpCellDotMaxProject(std::vector<Nucleus*> nuclei, uint16_t* stack, uint16_t* median594, uint16_t* median647,
+	float blue_pixel_lower,
+	float blue_pixel_upper,
+	float green_pixel_lower,
+	float green_pixel_upper,
+	float red_pixel_lower,
+	float red_pixel_upper,
+	float white_pixel_lower,
+	float white_pixel_upper,
+	int width, int height, int depth) {
+	int i, k = 0, key = 0;
+	do {
+		Nucleus* nuc = nuclei.at(k);
+		cv::Mat img = closeUpCellDotMaxProjectImg(nuc, stack, median594, median647,
+			blue_pixel_lower,
+			blue_pixel_upper,
+			green_pixel_lower,
+			green_pixel_upper,
+			red_pixel_lower,
+			red_pixel_upper,
+			white_pixel_lower,
+			white_pixel_upper,
+			width, height, depth);
+
+		cv::imshow("Display window", img);
+
+		key = cv::waitKey(0);
+		if (key == 'a') {
+			do {
+				k = (k + 1) % nuclei.size();
+			} while (!nuclei.at(k)->validSize());
+		}
+		else if (key == 'd') {
+			do {
+				k = (nuclei.size() + k - 1) % nuclei.size();
+			} while (!nuclei.at(k)->validSize());
+		}
+
+	} while (key != 27);
+
+}
+
+void closeUpCellAndDots(std::vector<Nucleus*> nuclei, uint16_t* stack, uint16_t* median594, uint16_t* median647,
+	float blue_pixel_lower,
+	float blue_pixel_upper,
+	float green_pixel_lower,
+	float green_pixel_upper,
+	float red_pixel_lower,
+	float red_pixel_upper,
+	float white_pixel_lower,
+	float white_pixel_upper,
+	int width, int height, int depth) {
+	int k = 0, key = 0;
+	int i = 0;
+	do {
+		int nx, ny, nz;
+		Nucleus* nuc = nuclei.at(k);
+		std::tie(nx, ny, nz) = nuc->local_max;
+		cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
+
+		// we are going to look at range from maxima-150 to maxima+150
+		for (int rx = -200; rx <= 200; rx++) {
+			if (nx + rx < 0 || nx + rx >= width) {
+				continue;
+			}
+			for (int ry = -200; ry <= 200; ry++) {
+				if (ny + ry < 0 || ny + ry >= height) {
+					continue;
+				}
+				BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
+
+				uint16_t green = median594[(nx + rx) + (ny + ry) * width + width * height * i];
+				if (green < green_pixel_lower) bgr.green = 0;
+				else if (green > green_pixel_upper) bgr.green = 255 * 255;
+				else bgr.green = (green - green_pixel_lower) * (255 * 255 / green_pixel_upper);
+
+				uint16_t blue = stack[(nx + rx) + (ny + ry) * width + width * height * i];
+				if (blue < blue_pixel_lower) bgr.blue = 0;
+				else if (blue > blue_pixel_upper) bgr.blue = 255 * 255;
+				else bgr.blue = (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper);
+
+				uint16_t red = median647[(nx + rx) + (ny + ry) * width + width * height * i];
+				if (red < red_pixel_lower) bgr.red = 0;
+				else if (red > red_pixel_upper) bgr.red = 255 * 255;
+				else bgr.red = (red - red_pixel_lower) * (255 * 255 / red_pixel_upper);
+			}
+		}
+
+		for (int j = 0; j < nuc->boundary.size(); j++) {
+			int x, y, z;
+
+			std::tie(x, y, z) = nuc->boundary.at(j);
+
+			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+			if (z == i) {
+				BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+				bgr.red = 255 * 255;
+				bgr.green = 255 * 255;
+				bgr.blue = 255 * 255;
+
+			}
+		}
+
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_points594.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_points594.at(j);
+
+			if (((dz - i) < 5 && i - dz < 5)) {
+				// if we are close enough
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+
+			}
+
+		}
+
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_points640.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_points640.at(j);
+
+			if (((dz - i) < 5 && i - dz < 5)) {
+				//cv::rectangle(img, cv::Point(dx - 5, dy - 5), cv::Point(dx + 5, dy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
+				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+			}
+
+		}
+		cv::imshow("Display window", img);
+		key = cv::waitKey(0);
+		if (key == 's') {
+			i = (i + 1) % depth;
+		}
+		else if (key == 'w') {
+			i = (depth + i - 1) % depth;
+		}
+		else if (key == 'a') {
+			do {
+				k = (k + 1) % nuclei.size();
+			} while (!nuclei.at(k)->validSize());
+			i = std::get<2>(nuclei.at(k)->local_max);
+		}
+		else if (key == 'd') {
+			do {
+				k = (nuclei.size() + k - 1) % nuclei.size();
+			} while (!nuclei.at(k)->validSize());
+			i = std::get<2>(nuclei.at(k)->local_max);
+		}
+		else {
+			//blink = !blink;
+		}
+	} while (key != 27);
 }
