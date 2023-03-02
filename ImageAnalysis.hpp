@@ -123,10 +123,8 @@ void getTiffDimensions(const char* filename, int& width, int& height, int& depth
 
 void loadTiff(uint16_t* output, const char* filename, const int width, const int height, const int depth) {
 		TIFF* tiff = TIFFOpen(filename, "r");
-
 		// turn off warnings
 		TIFFSetWarningHandler(0);
-
 		int zed = 0, z = 0;
 		do {
 			int ied = 0;
@@ -1229,7 +1227,7 @@ void scanfloat(float* image, const int width, const int height, const int depth,
 	int k = 0;
 	int key = 0;
 	do {
-		cv::Mat img(width, height, CV_32F, image + width * height * i);
+		cv::Mat img(height, width, CV_32F, image + width * height * i);
 		cv::Mat resized(512, 512, CV_32F);
 
 		cv::resize(img, resized, cv::Size(512, 512));
@@ -1251,7 +1249,7 @@ void scanInt(uint16_t* image, const int width, const int height, const int depth
 	int k = 0;
 	int key = 0;
 	do {
-		cv::Mat img(width, height, CV_16U, image + width * height * i);
+		cv::Mat img(height, width, CV_16U, image + width * height * i);
 		cv::Mat resized(512, 512, CV_16U);
 		cv::resize(img, resized, cv::Size(512, 512));
 		resized = resized * 255;
@@ -1274,8 +1272,8 @@ void displayBlobsInt(uint16_t* stack, int width, int height, int depth, std::vec
 	bool blink = true;
 	int key = 0;
 	do {
-		cv::Mat img(width, height, CV_16U, stack + width * height * i);
-		cv::Mat dst(width, height, CV_16UC3);
+		cv::Mat img(height, width, CV_16U, stack + width * height * i);
+		cv::Mat dst(height, width, CV_16UC3);
 		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
 
 		for (int l = 0; l < nucleii.size(); l++) {
@@ -1346,8 +1344,8 @@ void displayBlobsFloat(float* stack, int width, int height, int depth, std::vect
 	bool blink = true;
 	int key = 0;
 	do {
-		cv::Mat img(width, height, CV_32F, stack + width * height * i);
-		cv::Mat dst(width, height, CV_32FC3);
+		cv::Mat img(height, width, CV_32F, stack + width * height * i);
+		cv::Mat dst(height, width, CV_32FC3);
 		cv::cvtColor(img, dst, cv::COLOR_GRAY2BGR);
 
 		for (int l = 0; l < nucleii.size(); l++) {
