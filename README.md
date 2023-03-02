@@ -9,5 +9,7 @@ However, it is important for scientific reproduciblity to make code public, so I
 The code currently requires Windows-specific concurrency libraries `ppl.h` and `ppltasks.h` and will not run on
 Mac or Linux.
 
+The code requires the installation of `OpenCV` and `libTiff` via `vcpkg` in order to work.
+
 The library is contained within the `ImageAnalysis.hpp` file. For example usage, check out `example.cpp`.
 
