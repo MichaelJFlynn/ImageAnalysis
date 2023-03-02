@@ -9,7 +9,7 @@ set(OpenCV_DIR "${PROJECT_SOURCE_DIR}/vcpkg/packages/opencv4_x64-windows/share/o
 
 #add_subdirectory(libtiff)
 
-
+## test
 find_library(TIFF "${PROJECT_SOURCE_DIR}/vcpkg/packages/tiff_x64-windows/bin/tiff.dll")
 #set(TIFF_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/vcpkg/packages/tiff_x64-windows/include/")
 #set(TIFF_LIBRARY "${PROJECT_SOURCE_DIR}/vcpkg/packages/tiff_x64-windows/lib/tiffxx.lib")
