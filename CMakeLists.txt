@@ -21,7 +21,7 @@ find_package(TIFF REQUIRED)
 #
 #add_executable(Analysis analysis.cpp)
 
-set(EXECUTABLE_LIST analysis_endogenous_0x analysis2015-05-18 analysis_0x analysisU2OSHCR analysis_1x_10x tests mousebrain0207 example)
+set(EXECUTABLE_LIST tests example)
 
 FOREACH(EXECUTABLE ${EXECUTABLE_LIST})
 	add_executable(${EXECUTABLE} ${EXECUTABLE}.cpp)
