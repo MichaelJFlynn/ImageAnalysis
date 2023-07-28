@@ -16,6 +16,8 @@
 // WINDOWS SPECIFIC CONCURRENCY RUNTIME
 #include <ppl.h>
 #include <ppltasks.h>
+// ND2 SDK
+#include "Nd2ReadSdk.h"
 
 
 #define GAUSSIAN_CUTOFF 6
@@ -58,6 +60,7 @@ class Dot;
 class Nucleus : public Blob {
 	const int size_upper_limit;
 	const int size_lower_limit;
+
 public:
 	Nucleus(int sul, int sll) : size_upper_limit(sul), size_lower_limit(sll) {
 	}
@@ -136,6 +139,73 @@ void loadTiff(uint16_t* output, const char* filename, const int width, const int
 			z++;
 		} while (TIFFReadDirectory(tiff) && z < depth);
 		TIFFClose(tiff);
+}
+
+/* 
+Maybe implement later
+Useful for safekeeping as the Nd2 metadata actually has a lot of information 
+void printNd2Info(const char* filename) {
+	LIMFILEHANDLE img;
+
+	img = Lim_FileOpenForReadUtf8("D:\\U2OSFishvsHCR2023-06-29\\FISH_0x_s1.nd2");
+
+	char* json;
+	json = Lim_FileGetAttributes(img);
+
+	std::cout << "Attributes:" << std::endl;
+	std::cout << json << std::endl;
+
+	std::cout << "Metadata:" << std::endl;
+	std::cout << Lim_FileGetMetadata(img) << std::endl;
+
+	std::cout << "Text Info:" << std::endl;
+	std::cout << Lim_FileGetTextinfo(img) << std::endl;
+
+	std::cout << "Experiment info:" << std::endl;
+	std::cout << Lim_FileGetExperiment(img) << std::endl;
+
+	std::cout << "coord size: " << Lim_FileGetCoordSize(img) << std::endl;
+
+
+	std::cout << "frames: " << Lim_FileGetSeqCount(img) << std::endl;
+
+	char type[500];
+	int s;
+	s = Lim_FileGetCoordInfo(img, 0, type, 500);
+
+	std::cout << "Coord info -  Type: " << type << " size: " << s << std::endl;
+}*/
+
+void getNd2Depth(const char* filename, int& z) {
+	LIMFILEHANDLE img = Lim_FileOpenForReadUtf8(filename);
+	z = Lim_FileGetSeqCount(img);
+	Lim_FileClose(img);
+
+}
+
+void loadNd2(uint16_t* output, const char* filename, const int width, const int height, const int depth, const int numColors, const int colorIndex) {
+	LIMFILEHANDLE img = Lim_FileOpenForReadUtf8(filename);
+
+	LIMPICTURE pic;
+	// all colors assumed to be 16 bit
+	Lim_InitPicture(&pic, width, height, 16, numColors);
+
+	uint16_t* data;
+
+	for (int z = 0; z < depth; z++) {
+		Lim_FileGetImageData(img, z, &pic);
+		data = (uint16_t*)pic.pImageData;
+		for (int y = 0; y < height; y++) {
+
+			for (int x = 0; x < width; x++) {
+				output[width * height * z + width * y + x] = data[numColors * width * y + numColors*x + colorIndex];
+			}
+		}
+	}
+
+	// free picture and close file 
+	Lim_DestroyPicture(&pic);
+	Lim_FileClose(img);
 }
 
 
@@ -594,6 +664,307 @@ void eigenvector(std::array<std::array<float, 3>, 3> hessian, float eig, float3&
 	ev.z = tmp[2] / ev_mag;
 }
 
+struct complex {
+	double real;
+	double imaginary;
+};
+typedef struct complex complex; 
+
+complex inline cexp(double angle) {
+	return { cos(angle), sin(angle)};
+}
+
+complex inline cadd(complex c1, complex c2) {
+	return { c1.real + c2.real, c1.imaginary + c2.imaginary };
+}
+
+complex inline cmul(complex c1, complex c2) {
+	return { c1.real * c2.real - c1.imaginary * c2.imaginary, c1.real * c2.imaginary + c1.imaginary * c2.real };
+}
+
+complex inline cmul(complex c, double f) {
+	return { c.real * f, c.imaginary * f };
+}
+
+complex inline cmul(double f, complex c) {
+	return { c.real * f, c.imaginary * f };
+}
+
+complex inline cdiv(complex c1, complex c2) {
+	return { (c1.real * c2.real + c1.imaginary * c2.imaginary) / (c2.real * c2.real + c2.imaginary * c2.imaginary),
+		(c1.imaginary * c2.real - c1.real * c2.imaginary) / (c2.real * c2.real + c2.imaginary * c2.imaginary) };
+}
+
+complex inline cdiv(complex c, double f) {
+	return { c.real / f, c.imaginary / f };
+}
+
+complex inline conj(complex c) {
+	return { c.real, -c.imaginary };
+}
+
+float inline angle(complex c) {
+	return atan2(c.imaginary, c.real);
+}
+
+float inline rSq(complex c) {
+	return c.real * c.real + c.imaginary * c.imaginary;
+}
+
+
+template <typename T>
+void fft3D(T* input, std::vector<int> width_prime_factors, std::vector<int> height_prime_factors, std::vector<int> depth_prime_factors, complex* result, bool inverse = false) {
+	int width = 1, height = 1, depth = 1;
+	for (int pf : width_prime_factors) {
+		width *= pf;
+	}
+	for (int pf : height_prime_factors) {
+		height *= pf;
+	}
+	for (int pf : depth_prime_factors) {
+		depth *= pf;
+	}
+
+	printf("width: %d, height: %d, depth: %d\n", width, height, depth);
+	complex* temp = new complex[width * height * depth];
+
+	for (int i = 0; i < width * height * depth; i++) {
+		complex c = { 1,0 };
+		temp[i] = cmul(input[i], c);
+	}
+
+	int inverse_factor = 1;
+	if (inverse) {
+		inverse_factor = -1;
+	}
+
+	concurrency::parallel_for(0, height, [&input, &result, &temp, depth, width, height, inverse_factor, width_prime_factors](int y) {
+		for (int z = 0; z < depth; z++) {
+			int scale = 1;
+			for (int pf : width_prime_factors) {
+
+				int group_size = scale * pf;
+				int num_groups = width / group_size;
+
+				for (int i = 0; i < num_groups; i++) {
+					for (int n = 0; n < pf; n++) {
+						for (int k = 0; k < scale; k++) {
+							complex sum = { 0, 0 };
+							for (int l = 0; l < pf; l++) {
+								sum = cadd(sum,
+									cmul(
+										cexp(-inverse_factor * 2 * M_PI * (k + n * scale) * l / ((double) group_size)),
+										temp[width * height * z + width * y + (i + (k * pf + l) * num_groups)]));
+							}
+							sum = cdiv(sum, sqrt(pf));
+
+							result[y * width * depth + depth * (i + (k + n * scale)*num_groups) + z] = sum;
+						}
+					}
+				}
+				// copy back into 
+				for (int x = 0; x < width; x++) {
+					temp[width * height * z + width * y + x] = result[y * width * depth + depth * x + z];
+				}
+
+				scale = scale * pf;
+			}
+		}
+		});
+
+	std::cout << "done x" << std::endl;
+
+	concurrency::parallel_for(0, width, [&input, &result, &temp, depth, width, height, inverse_factor, depth_prime_factors](int mu) {
+		for (int y = 0; y < height; y++) {
+			int scale = 1;
+			for (int pf : depth_prime_factors) {
+
+				int group_size = scale * pf;
+				int num_groups = depth / group_size;
+
+				for (int i = 0; i < num_groups; i++) {
+					for (int n = 0; n < pf; n++) {
+						for (int k = 0; k < scale; k++) {
+
+							complex sum = { 0, 0 };
+							for (int l = 0; l < pf; l++) {
+								sum = cadd(sum,
+									cmul(
+										cexp(-inverse_factor * 2 * M_PI * (k + n * scale) * l / ((double) group_size)),
+										result[y*width*depth + mu*depth +  (i + (k * pf + l) * num_groups)]));
+							}
+							sum = cdiv(sum, sqrt(pf));
+
+							temp[mu*depth*height + height*(i + (k + n*scale)*num_groups) + y] = sum;
+						}
+					}
+				}
+				// copy back into 
+				for (int z = 0; z < depth; z++) {
+					result[y*width*depth + mu*depth + z] = temp[mu*depth*height + height*z + y];
+				}
+
+				scale = scale * pf;
+			}
+
+
+		}
+		});
+
+	std::cout << "done z" << std::endl;
+
+
+	concurrency::parallel_for(0, depth, [&input, &result, &temp, depth, width, height, inverse_factor, height_prime_factors](int omega) {
+		for (int mu = 0; mu < width; mu++) {
+			int scale = 1;
+			for (int pf : height_prime_factors) {
+
+				int group_size = scale * pf;
+				int num_groups = height / group_size;
+
+				for (int i = 0; i < num_groups; i++) {
+					for (int n = 0; n < pf; n++) {
+						for (int k = 0; k < scale; k++) {
+
+							complex sum = { 0, 0 };
+							for (int l = 0; l < pf; l++) {
+								sum = cadd(sum,
+									cmul(
+										cexp(-inverse_factor * 2 * M_PI * (k + n * scale) * l / ((double) group_size)),
+										temp[mu * depth * height + height * omega + (i + (k * pf + l) * num_groups)]));
+							}
+							sum = cdiv(sum, sqrt(pf));
+							result[omega * width * height + width * (i + (k + n * scale) * num_groups) + mu] = sum;
+						}
+					}
+				}
+
+				// copy back into 
+				for (int y = 0; y < height; y++) {
+					temp[mu * depth * height + height * omega + y] = result[omega * width * height + width * y + mu];
+				}
+
+				scale = scale * pf;
+			}
+
+		}
+		});
+
+	std::cout << "done y" << std::endl;
+
+	delete[] temp;
+}
+
+std::tuple<int,int,int> phase_correlation(complex* ifft_subject, complex* ifft_reference, int width, int height, int depth) {
+	complex* H = new complex[width * height * depth];
+	complex* Hifft = new complex[width * height * depth];
+	float* Hfloat = new float[width * height * depth];
+
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				int i = width * height * z + width * y + x;
+				H[i] = cdiv(cmul(ifft_subject[i], conj(ifft_reference[i])), rSq(ifft_reference[i]));
+			}
+		}
+	}
+	time_t start, end;
+	std::cout << "performing H ifft...";
+	time(&start);
+	fft3D(H, { 2,2,2,2,2,2,2,2,2,2,2 }, { 2,2,2,2,2,2,2,2,2,2,2 }, { 2,2,2,3,3 }, Hifft);
+	time(&end);
+	std::cout << "done." << std::endl;
+	std::cout << "FFT took " << end - start << " seconds" << std::endl;
+
+	for (int i = 0; i < width * height * depth; i++) {
+		Hfloat[i] = (float)Hifft[i].real;
+	}
+
+	//float* shift_visualizer = new float[60 * 60 * 60];
+	std::tuple<int, int, int> max_loc = { 0,0,0 };
+	float max2 = 0;
+	for (int z = -30; z < 30; z++) {
+		for (int y = -30; y < 30; y++) {
+			for (int x = -30; x < 30; x++) {
+				float sample = Hfloat[width * height * ((z + depth) % depth) + width * ((y + height) % height) + ((x + width) % width)];
+				if (sample > max2) {
+					max2 = sample;
+					max_loc = { x, y, z };
+				}
+				//shift_visualizer[60 * 60 * (z + 30) + 60 * (y + 30) + 30 + x] = sample;
+			}
+		}
+	}
+	int xmax2, ymax2, zmax2;
+	std::tie(xmax2, ymax2, zmax2) = max_loc;
+	printf("Found shift max %e at %d %d %d\n", max2, xmax2, ymax2, zmax2);
+
+	delete[] H;
+	delete[] Hifft;
+	delete[] Hfloat;
+
+	return max_loc;
+	//std::cout << "displaying ifft..." << std::endl;
+	//normalizeImgFloat(shift_visualizer, 60, 60, 60, 0, max2 / 3);
+	//scanfloat(shift_visualizer, 60, 60, 60, 0, 1);
+}
+
+void subtract_projection(float* img, uint16_t* background, int width, int height, int depth) {
+	float coefficient = 0;
+	float divisor = 0;
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				int i = width * height * z + width * y + x;
+				coefficient += img[i] * background[i];
+				divisor += background[i] * background[i];
+			}
+		}
+	}
+	coefficient /= divisor;
+	std::cout << "Subtracting background with coefficient " << coefficient << std::endl;
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				int i = width * height * z + width * y + x;
+				img[i] -= coefficient * background[i];
+			}
+		}
+	}
+}
+
+
+void shift_fft(complex* fft, std::tuple<int,int,int> shift, int width, int height, int depth) {
+	int xmax, ymax, zmax;
+	std::tie(xmax, ymax, zmax) = shift;
+
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				if (xmax != 0) {
+					fft[width * height * z + width * y + x] =
+						cmul(
+							fft[width * height * z + width * y + x],
+							cexp(-2 * M_PI * xmax * x / width));
+				}
+				if (ymax != 0) {
+					fft[width * height * z + width * y + x] =
+						cmul(
+							fft[width * height * z + width * y + x],
+							cexp(-2 * M_PI * ymax * y / height));
+				}
+				if (zmax != 0) {
+					fft[width * height * z + width * y + x] =
+						cmul(
+							fft[width * height * z + width * y + x],
+							cexp(-2 * M_PI * zmax * z / depth));
+				}
+			}
+		}
+	}
+}
+
+
 
 // medium fast gaussian filter
 // In this function, for optimization purposes I try to use some pointer
@@ -1033,6 +1404,63 @@ void hessianAt(float3* gradientField, const int width, const int height, const i
 }
 
 
+void segment_watershed(
+	std::vector<std::tuple<int, int, int>>& points,
+	std::vector<std::tuple<int, int, int>>& boundary,
+	std::tuple<int, int, int>& local_max,
+	float* negfield,
+	float negthresh,
+	float* posfield,
+	float posthresh,
+	const int width,
+	const int height,
+	const int depth) {
+
+	char* visited = new char[width * height * depth];
+	memset(visited, 0, sizeof(char) * width * height * depth);
+	int x_orig, y_orig, z_orig;
+	std::tie(x_orig, y_orig, z_orig) = local_max;
+	
+	points.push_back(std::make_tuple(x_orig, y_orig, z_orig));
+	int lookedat = 0;
+	while ( (points.size() > lookedat) && (points.size() < 2000000)){
+		int x, y, z;
+
+		std::tie(x, y, z) = points.at(lookedat);
+		lookedat++;
+
+		std::array<std::tuple<int, int, int>, 6> new_points = {
+		std::make_tuple(x + 1, y, z),
+		std::make_tuple(x - 1, y, z),
+		std::make_tuple(x, y + 1, z),
+		std::make_tuple(x, y - 1, z),
+		std::make_tuple(x, y, z + 1),
+		std::make_tuple(x, y, z - 1)
+		};
+
+		for (int i = 0; i < new_points.size(); i++) {
+			// if in points, continue
+			int x2, y2, z2;
+			std::tie(x2, y2, z2) = new_points.at(i);
+			if (visited[x2 + y2 * width + z2 * width * height] == 1) {
+				continue;
+			}
+			if (x2 == 0 || y2 == 0 || z2 == 0 || x2 == width - 1 || y2 == height - 1 || z2 == depth - 1) {
+				boundary.push_back(std::make_tuple(x2, y2, z2));
+			}
+			else if( (negfield[x2 + height * y2 + height * width * z2] < negthresh) || 
+					 (posfield[x2 + height * y2 + height * width * z2] < posthresh))  {
+				boundary.push_back(std::make_tuple(x2, y2, z2));
+			} else {
+				// if we're more than the threshold, we're still in the bulk
+				points.push_back(std::make_tuple(x2, y2, z2));
+			}
+			visited[x2 + y2 * width + z2 * width * height] = 1;
+		}
+
+	}
+	delete[] visited;
+}
 
 void segment_blob(
 	std::vector<std::tuple<int, int, int>>& points,
@@ -1194,10 +1622,9 @@ void segment_blob(
 				if (eig3 >= 0) {
 					d4fdeig3_4 = fourth_directional_deriv(gradientField, x2, y2, z2, ev3);
 				}*/
-
+				float lambda = 0;
 				if ( //(eig1 >= 0 && d4fdeig1_4 >=0) || (eig2 >= 0 && d4fdeig2_4 >=0) || (eig3 >= 0 && d4fdeig3_4 >= 0)
-					(eig1 >= 0) || (eig2 >= 0) || (eig3 >= 0)
-					) {
+					(eig1 >= lambda) || (eig2 >= lambda) || (eig3 >= lambda)
 					//|| d2fdr2 >= 0 || lambda1 >= 0 || lambda2 >= 0
 					//d2fdg2 >=0
 					//((eig1 >=0) &&  (eig2>= 0)) || ((eig1>=0) && (eig3>=0)) || ((eig2>=0)&&(eig3>=0)) 
@@ -1206,9 +1633,10 @@ void segment_blob(
 					//|| next_laplacian - d2fdr2 >= 0 // || next_laplacian < this_laplacian //-1/(sigma*sigma)*0.37
 					//|| next_gradient.x * r.x + next_gradient.y * r.y + next_gradient.z * r.z >= 0
 					//|| next_gaussian > this_gaussian // solves kissing problem?
-
+					) {
 					// if laplacian is greater than or equal 0, then we're in the boundary.
 					// also if on boundary of image
+					//std::cout << eig1 << " " << eig2 << " " << eig3 << std::endl;
 					boundary.push_back(std::make_tuple(x2, y2, z2));
 				}
 				else {
@@ -1250,8 +1678,8 @@ void scanInt(uint16_t* image, const int width, const int height, const int depth
 	int key = 0;
 	do {
 		cv::Mat img(height, width, CV_16U, image + width * height * i);
-		cv::Mat resized(512, 512, CV_16U);
-		cv::resize(img, resized, cv::Size(512, 512));
+		cv::Mat resized(1024, 1024, CV_16U);
+		cv::resize(img, resized, cv::Size(1024, 1024));
 		resized = resized * 255;
 
 		cv::imshow("Display window", resized);
@@ -1563,12 +1991,25 @@ cv::Mat closeUpCellDotMaxProjectImg(Nucleus* nuc, uint16_t* stack, uint16_t* med
 	float red_pixel_upper,
 	float white_pixel_lower,
 	float white_pixel_upper,
-	int width, int height, int depth) {
+	int width, int height, int depth,
+	bool draw_segmentation = true) {
 
 	int nx, ny, nz, i;
 	std::tie(nx, ny, nz) = nuc->local_max;
 	i = nz;
 	cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
+
+	int zmin = nz;
+	int zmax = nz;
+	for (int p = 0; p < nuc->boundary.size(); p++) {
+		int this_z = std::get<2>(nuc->points.at(p));
+		if (this_z > zmax) {
+			zmax = this_z;
+		}
+		if (this_z < zmin) {
+			zmin = this_z;
+		}
+	}
 
 	// we are going to look at range from maxima-150 to maxima+150
 	for (int rx = -200; rx <= 200; rx++) {
@@ -1581,7 +2022,7 @@ cv::Mat closeUpCellDotMaxProjectImg(Nucleus* nuc, uint16_t* stack, uint16_t* med
 			}
 			BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
 
-			for (int zh = i - 50; zh < i + 50; zh++) {
+			for (int zh = zmin -10; zh < zmax + 10; zh++) {
 				if (zh < 0) continue;
 				if (zh >= depth) break;
 				uint16_t green = median594[(nx + rx) + (ny + ry) * width + width * height * zh];
@@ -1604,40 +2045,180 @@ cv::Mat closeUpCellDotMaxProjectImg(Nucleus* nuc, uint16_t* stack, uint16_t* med
 			}
 		}
 	}
+	if (draw_segmentation) {
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_points594.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_points594.at(j);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
 
-	// for all the dots, show their outline
-	for (int j = 0; j < nuc->close_points594.size(); j++) {
-		int dx, dy, dz;
-		std::tie(dx, dy, dz) = nuc->close_points594.at(j);
-		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
-		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+		}
 
-	}
+		// for all the dots, show their outline
+		for (int j = 0; j < nuc->close_points640.size(); j++) {
+			int dx, dy, dz;
+			std::tie(dx, dy, dz) = nuc->close_points640.at(j);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
+			cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+		}
 
-	// for all the dots, show their outline
-	for (int j = 0; j < nuc->close_points640.size(); j++) {
-		int dx, dy, dz;
-		std::tie(dx, dy, dz) = nuc->close_points640.at(j);
-		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
-		cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
-	}
+		for (int j = 0; j < nuc->boundary.size(); j++) {
+			int x, y, z;
 
-	for (int j = 0; j < nuc->boundary.size(); j++) {
-		int x, y, z;
+			std::tie(x, y, z) = nuc->boundary.at(j);
 
-		std::tie(x, y, z) = nuc->boundary.at(j);
+			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+			if (z == i) {
+				BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+				bgr.red = 255 * 255;
+				bgr.green = 255 * 255;
+				bgr.blue = 255 * 255;
 
-		if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
-		if (z == i) {
-			BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
-			bgr.red = 255 * 255;
-			bgr.green = 255 * 255;
-			bgr.blue = 255 * 255;
-
+			}
 		}
 	}
 	return img;
 }
+
+
+
+cv::Mat GreenMaxProject(Nucleus* nuc, uint16_t* stack,
+	float green_pixel_lower,
+	float green_pixel_upper,
+	int width, int height, int depth,
+	bool draw_segmentation = true) {
+
+	int nx, ny, nz, i;
+	std::tie(nx, ny, nz) = nuc->local_max;
+	i = nz;
+	cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
+
+	int zmin = nz;
+	int zmax = nz;
+	for (int p = 0; p < nuc->boundary.size(); p++) {
+		int this_z = std::get<2>(nuc->points.at(p));
+		if (this_z > zmax) {
+			zmax = this_z;
+		}
+		if (this_z < zmin) {
+			zmin = this_z;
+		}
+	}
+
+	// we are going to look at range from maxima-150 to maxima+150
+	for (int rx = -200; rx <= 200; rx++) {
+		if (nx + rx < 0 || nx + rx >= width) {
+			continue;
+		}
+		for (int ry = -200; ry <= 200; ry++) {
+			if (ny + ry < 0 || ny + ry >= height) {
+				continue;
+			}
+			BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
+
+			for (int zh = zmin - 10; zh < zmax + 10; zh++) {
+				if (zh < 0) continue;
+				if (zh >= depth) break;
+				uint16_t green = stack[(nx + rx) + (ny + ry) * width + width * height * zh];
+				if (bgr.green < 255 * 255 && bgr.green < (green - green_pixel_lower) * (255 * 255 / green_pixel_upper)) {
+					if (green > green_pixel_upper) bgr.green = 255 * 255;
+					else bgr.green = (green - green_pixel_lower) * (255 * 255 / green_pixel_upper);
+				}
+			}
+		}
+	}
+	if (draw_segmentation) {
+		for (int j = 0; j < nuc->boundary.size(); j++) {
+			int x, y, z;
+
+			std::tie(x, y, z) = nuc->boundary.at(j);
+
+			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+			if (z == i) {
+				BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+				bgr.red = 255 * 255;
+				bgr.green = 255 * 255;
+				bgr.blue = 255 * 255;
+
+			}
+		}
+	}
+	return img;
+}
+
+
+cv::Mat YellowMaxProject(Nucleus* nuc, uint16_t* stack, 
+	float yellow_pixel_lower,
+	float yellow_pixel_upper,
+	int width, int height, int depth,
+	bool draw_segmentation = true) {
+
+	int nx, ny, nz, i;
+	std::tie(nx, ny, nz) = nuc->local_max;
+	i = nz;
+	cv::Mat img(401, 401, CV_16UC3, cv::Scalar(0, 0, 0));
+
+	int zmin = nz;
+	int zmax = nz;
+	for (int p = 0; p < nuc->boundary.size(); p++) {
+		int this_z = std::get<2>(nuc->points.at(p));
+		if (this_z > zmax) {
+			zmax = this_z;
+		}
+		if (this_z < zmin) {
+			zmin = this_z;
+		}
+	}
+
+	// we are going to look at range from maxima-150 to maxima+150
+	for (int rx = -200; rx <= 200; rx++) {
+		if (nx + rx < 0 || nx + rx >= width) {
+			continue;
+		}
+		for (int ry = -200; ry <= 200; ry++) {
+			if (ny + ry < 0 || ny + ry >= height) {
+				continue;
+			}
+			BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
+
+			for (int zh = zmin - 10; zh < zmax + 10; zh++) {
+				if (zh < 0) continue;
+				if (zh >= depth) break;
+				uint16_t green = stack[(nx + rx) + (ny + ry) * width + width * height * zh];
+				if (bgr.green < 255 * 255 && bgr.green < (green - yellow_pixel_lower) * (255 * 255 / yellow_pixel_upper)) {
+					if (green > yellow_pixel_upper) bgr.green = 255 * 255;
+					else bgr.green = (green - yellow_pixel_lower) * (255 * 255 / yellow_pixel_upper);
+				}
+
+				uint16_t red = green;
+				if (bgr.red < 255 * 255 && bgr.red < (red - yellow_pixel_lower) * (255 * 255 / yellow_pixel_upper)) {
+					if (red > yellow_pixel_upper) bgr.red = 255 * 255;
+					else bgr.red = (red - yellow_pixel_lower) * (255 * 255 / yellow_pixel_upper);
+				}
+			}
+		}
+	}
+	if (draw_segmentation) {
+		for (int j = 0; j < nuc->boundary.size(); j++) {
+			int x, y, z;
+
+			std::tie(x, y, z) = nuc->boundary.at(j);
+
+			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+			if (z == i) {
+				BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+				bgr.red = 255 * 255;
+				bgr.green = 255 * 255;
+				bgr.blue = 255 * 255;
+
+			}
+		}
+	}
+	return img;
+}
+
+
 
 void closeUpCellDotMaxProject(std::vector<Nucleus*> nuclei, uint16_t* stack, uint16_t* median594, uint16_t* median647,
 	float blue_pixel_lower,
@@ -1648,7 +2229,8 @@ void closeUpCellDotMaxProject(std::vector<Nucleus*> nuclei, uint16_t* stack, uin
 	float red_pixel_upper,
 	float white_pixel_lower,
 	float white_pixel_upper,
-	int width, int height, int depth) {
+	int width, int height, int depth,
+	bool draw_segmentation = true) {
 	int i, k = 0, key = 0;
 	do {
 		Nucleus* nuc = nuclei.at(k);
@@ -1661,7 +2243,8 @@ void closeUpCellDotMaxProject(std::vector<Nucleus*> nuclei, uint16_t* stack, uin
 			red_pixel_upper,
 			white_pixel_lower,
 			white_pixel_upper,
-			width, height, depth);
+			width, height, depth,
+			draw_segmentation);
 
 		cv::imshow("Display window", img);
 
@@ -1720,54 +2303,54 @@ void closeUpCellAndDots(std::vector<Nucleus*> nuclei, uint16_t* stack, uint16_t*
 				else if (blue > blue_pixel_upper) bgr.blue = 255 * 255;
 				else bgr.blue = (blue - blue_pixel_lower) * (255 * 255 / blue_pixel_upper);
 
-				uint16_t red = median647[(nx + rx) + (ny + ry) * width + width * height * i];
-				if (red < red_pixel_lower) bgr.red = 0;
-				else if (red > red_pixel_upper) bgr.red = 255 * 255;
-				else bgr.red = (red - red_pixel_lower) * (255 * 255 / red_pixel_upper);
 			}
 		}
 
-		for (int j = 0; j < nuc->boundary.size(); j++) {
-			int x, y, z;
 
-			std::tie(x, y, z) = nuc->boundary.at(j);
+			for (int j = 0; j < nuc->boundary.size(); j++) {
+				int x, y, z;
 
-			if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
-			if (z == i) {
-				BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
-				bgr.red = 255 * 255;
-				bgr.green = 255 * 255;
-				bgr.blue = 255 * 255;
+				std::tie(x, y, z) = nuc->boundary.at(j);
 
-			}
-		}
+				if (x - nx > 200 || x - nx < -200 || y - ny > 200 || y - ny < -200) continue;
+				if (z == i) {
+					BGR& bgr = img.ptr<BGR>(y - ny + 200)[x - nx + 200];
+					bgr.red = 255 * 255;
+					bgr.green = 255 * 255;
+					bgr.blue = 255 * 255;
 
-		// for all the dots, show their outline
-		for (int j = 0; j < nuc->close_points594.size(); j++) {
-			int dx, dy, dz;
-			std::tie(dx, dy, dz) = nuc->close_points594.at(j);
-
-			if (((dz - i) < 5 && i - dz < 5)) {
-				// if we are close enough
-				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
-				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
-
+				}
 			}
 
-		}
+			// for all the dots, show their outline
+			for (int j = 0; j < nuc->close_points594.size(); j++) {
+				int dx, dy, dz;
+				std::tie(dx, dy, dz) = nuc->close_points594.at(j);
 
-		// for all the dots, show their outline
-		for (int j = 0; j < nuc->close_points640.size(); j++) {
-			int dx, dy, dz;
-			std::tie(dx, dy, dz) = nuc->close_points640.at(j);
+				if (((dz - i) < 5 && i - dz < 5)) {
+					// if we are close enough
+					cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 255 * 255, 0), 1, 8, 0);
+					cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
 
-			if (((dz - i) < 5 && i - dz < 5)) {
-				//cv::rectangle(img, cv::Point(dx - 5, dy - 5), cv::Point(dx + 5, dy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
-				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
-				cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+				}
+
 			}
 
-		}
+			// for all the dots, show their outline
+			for (int j = 0; j < nuc->close_points640.size(); j++) {
+				int dx, dy, dz;
+				std::tie(dx, dy, dz) = nuc->close_points640.at(j);
+
+				if (((dz - i) < 5 && i - dz < 5)) {
+					//cv::rectangle(img, cv::Point(dx - 5, dy - 5), cv::Point(dx + 5, dy + 5), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+					cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 5, cv::Scalar(0, 0, 255 * 255), 1, 8, 0);
+					cv::circle(img, cv::Point(dx - nx + 200, dy - ny + 200), 6, cv::Scalar(255 * 255, 255 * 255, 255 * 255), 1, 8, 0);
+				}
+
+			}
+
+		
+
 		cv::imshow("Display window", img);
 		key = cv::waitKey(0);
 		if (key == 's') {
@@ -1792,4 +2375,50 @@ void closeUpCellAndDots(std::vector<Nucleus*> nuclei, uint16_t* stack, uint16_t*
 			//blink = !blink;
 		}
 	} while (key != 27);
+}
+
+
+void normalizeImg(uint16_t* img, int width, int height, int depth, uint16_t min, uint16_t max) {
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				uint16_t i = img[z * height * width + width * y + x];
+				if (i < min) {
+					i = 0;
+				}
+				else if (i > max) {
+					i =  256;
+				}
+				else {
+					i = (i*256 - min*256) / (max - min);
+				}
+
+				img[z * height * width + width * y + x] = i;
+			}
+
+		}
+	}
+}
+
+
+void normalizeImgFloat(float* img, int width, int height, int depth, float min, float max) {
+	for (int z = 0; z < depth; z++) {
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				float i = img[z * height * width + width * y + x];
+				if (i < min) {
+					i = 0;
+				}
+				else if (i > max) {
+					i = 1;
+				}
+				else {
+					i = (i - min) / (max - min);
+				}
+
+				img[z * height * width + width * y + x] = i;
+			}
+
+		}
+	}
 }
