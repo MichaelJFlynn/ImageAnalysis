@@ -2002,7 +2002,7 @@ cv::Mat closeUpCellDotMaxProjectImg(Nucleus* nuc, uint16_t* stack, uint16_t* med
 	int zmin = nz;
 	int zmax = nz;
 	for (int p = 0; p < nuc->boundary.size(); p++) {
-		int this_z = std::get<2>(nuc->points.at(p));
+		int this_z = std::get<2>(nuc->boundary.at(p));
 		if (this_z > zmax) {
 			zmax = this_z;
 		}
@@ -2022,7 +2022,7 @@ cv::Mat closeUpCellDotMaxProjectImg(Nucleus* nuc, uint16_t* stack, uint16_t* med
 			}
 			BGR& bgr = img.ptr<BGR>(ry + 200)[rx + 200];
 
-			for (int zh = zmin -10; zh < zmax + 10; zh++) {
+			for (int zh = zmin - 5; zh < zmax + 5; zh++) {
 				if (zh < 0) continue;
 				if (zh >= depth) break;
 				uint16_t green = median594[(nx + rx) + (ny + ry) * width + width * height * zh];
@@ -2097,7 +2097,7 @@ cv::Mat GreenMaxProject(Nucleus* nuc, uint16_t* stack,
 	int zmin = nz;
 	int zmax = nz;
 	for (int p = 0; p < nuc->boundary.size(); p++) {
-		int this_z = std::get<2>(nuc->points.at(p));
+		int this_z = std::get<2>(nuc->boundary.at(p));
 		if (this_z > zmax) {
 			zmax = this_z;
 		}
@@ -2162,7 +2162,7 @@ cv::Mat YellowMaxProject(Nucleus* nuc, uint16_t* stack,
 	int zmin = nz;
 	int zmax = nz;
 	for (int p = 0; p < nuc->boundary.size(); p++) {
-		int this_z = std::get<2>(nuc->points.at(p));
+		int this_z = std::get<2>(nuc->boundary.at(p));
 		if (this_z > zmax) {
 			zmax = this_z;
 		}
